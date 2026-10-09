@@ -1,0 +1,13 @@
+{
+  "name": "gallery-wall-maker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Photograph a wall, erase the frames, and rearrange a gallery wall on an iPad.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

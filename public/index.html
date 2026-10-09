@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Gallery Wall">
+  <meta name="theme-color" content="#f6f3ee">
+  <title>Gallery Wall Maker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top">
+    <ol id="steps">
+      <li data-step="start">Photo</li>
+      <li data-step="straighten">Straighten</li>
+      <li data-step="mark">Mark frames</li>
+      <li data-step="arrange">Arrange</li>
+    </ol>
+    <p id="hint"></p>
+  </header>
+
+  <main id="main">
+    <canvas id="stage"></canvas>
+    <section id="start" class="panel">
+      <h1>Gallery Wall Maker</h1>
+      <p>Snap your wall, erase what's hanging, then rearrange it — and try new pieces — before you put a single nail in.</p>
+      <button class="big primary" id="pickWall">📷 Take or choose a wall photo</button>
+      <button class="big" id="sampleWall">Try the sample wall</button>
+      <button class="big" id="resume" hidden>↩︎ Continue my last wall</button>
+      <p class="small" id="aiStatus"></p>
+    </section>
+  </main>
+
+  <footer id="bar"></footer>
+
+  <div id="busy" hidden><div class="spinner"></div><p id="busyText">Working…</p></div>
+  <div id="toast" hidden></div>
+  <input type="file" id="file" accept="image/*" hidden>
+  <script src="app.js"></script>
+</body>
+</html>
