@@ -5,6 +5,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 
 function loadEnv(file) {
   const env = {};
@@ -24,6 +25,7 @@ const FALLBACK_MODEL = 'gpt-image-1';
 const QUALITY = env.openAIImageQuality || 'medium';
 const PORT = Number(env.PORT || 3000);
 const PUBLIC = path.join(__dirname, 'public');
+const APP_PASSWORD = env.appPassword || env.APP_PASSWORD || '';
 
 const PROMPT =
   'Remove every picture frame, artwork and photo inside the transparent masked areas. ' +
@@ -54,6 +56,18 @@ function readBody(req, limit = 60 * 1024 * 1024) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+// Optional site-wide password (HTTP Basic Auth, any username) so a public URL
+// can't be used to spend your OpenAI credits.
+function authorized(req) {
+  if (!APP_PASSWORD) return true;
+  const m = /^Basic (.+)$/.exec(req.headers.authorization || '');
+  if (!m) return false;
+  const given = Buffer.from(m[1], 'base64').toString('utf8').split(':').slice(1).join(':');
+  const a = crypto.createHash('sha256').update(given).digest();
+  const b = crypto.createHash('sha256').update(APP_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
 }
 
 const dataUrlToBuffer = (u) => Buffer.from(String(u).split(',')[1] || '', 'base64');
@@ -113,6 +127,11 @@ function serveStatic(req, res) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.url === '/healthz') return send(res, 200, 'ok', 'text/plain');
+    if (!authorized(req)) {
+      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Gallery Wall Maker", charset="UTF-8"' });
+      return res.end('Password required');
+    }
     if (req.method === 'GET' && req.url === '/api/status') return send(res, 200, { ai: !!API_KEY, model: MODEL });
     if (req.method === 'POST' && req.url === '/api/erase') return await handleErase(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
@@ -131,5 +150,6 @@ server.listen(PORT, '0.0.0.0', () => {
       if (n.family === 'IPv4' && !n.internal) console.log(`  On your iPad:      http://${n.address}:${PORT}`);
     }
   }
+  if (!APP_PASSWORD) console.log('  Password: none (set appPassword before putting this on the internet)');
   console.log(API_KEY ? `  AI erase: on (${MODEL}, ${QUALITY})\n` : '  AI erase: OFF — add openAIAPIKey to .env (quick fill will be used)\n');
 });

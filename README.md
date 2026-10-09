@@ -11,6 +11,17 @@ npm start
 
 There are no dependencies to install; it needs Node 18 or newer. The server prints two addresses: one for this computer and one for your iPad on the same Wi‑Fi (e.g. `http://192.168.1.20:3000`). On the iPad, open that address in Safari, then use **Share → Add to Home Screen** for a full-screen app.
 
+## Put it online (HTTPS)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Cpartenio/GalleryWallMaker)
+
+1. Click the button and sign in to Render with GitHub. Free plan; allow Render to access this repo.
+2. When asked, fill in **openAIAPIKey** (your OpenAI key) and **appPassword** (any password you like).
+3. Deploy. You get a secure `https://gallerywallmaker-xxxx.onrender.com` URL.
+4. Open it on the iPad. Safari asks for a username and password: the username can be anything, and the password is your `appPassword`.
+
+The free plan sleeps after about 15 minutes of no use, so the first visit after that takes about 30–60 seconds to wake up. Every push to `master` redeploys automatically.
+
 ## How it works
 
 1. **Photo**: take or choose a photo of the wall (or tap *Try the sample wall*).
@@ -33,6 +44,7 @@ Your work autosaves in the browser, so a Safari reload won't lose it (*Continue 
 | `openAIAPIKey` | none | Required for AI erasing |
 | `openAIImageModel` | `gpt-image-1.5` | Falls back to `gpt-image-1` automatically if your account doesn't have it |
 | `openAIImageQuality` | `medium` | `low` / `medium` / `high` |
+| `appPassword` | none | If set, the whole site asks for this password (any username). **Set it on any public deploy**, or anyone with the URL can spend your OpenAI credits. |
 | `PORT` | `3000` | |
 
 The key stays on the server and is never sent to the browser.

@@ -1,0 +1,16 @@
+# One-click deploy: https://render.com/deploy?repo=https://github.com/Cpartenio/GalleryWallMaker
+services:
+  - type: web
+    name: gallerywallmaker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: openAIAPIKey
+        sync: false   # you'll be asked for it on deploy
+      - key: appPassword
+        sync: false   # password for the site (any username)
