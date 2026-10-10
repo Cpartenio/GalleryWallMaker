@@ -259,7 +259,10 @@ async function aiFill(photo, quads, pad) {
   const res = await fetch('api/erase', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: img.toDataURL('image/png'), mask: mask.toDataURL('image/png'), size: `${aw}x${ah}` }),
+    body: JSON.stringify({
+      image: img.toDataURL('image/png'), mask: mask.toDataURL('image/png'), size: `${aw}x${ah}`,
+      hasSheet: quads.some((q) => q.kind === 'sheet'),
+    }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.image) throw new Error(json.error || `Server error ${res.status}`);
@@ -351,29 +354,41 @@ function quickFill(out, regions) {
   og.putImageData(od, 0, 0);
 }
 
-async function eraseFrames() {
+// The empty wall. With AI, the whole photo is regenerated as a blank wall and used as-is, so the
+// lighting and paint run continuously with no patch edges. Without AI, patches are filled locally.
+async function makeCleanWall(quads) {
   const photo = S.photo, W = photo.width, H = photo.height;
   const pad = Math.round(Math.max(W, H) * 0.012);
-  const quads = S.boxes.filter((q) => quadSize(q).w > 2 && quadSize(q).h > 2);
-  const out = copyCanvas(photo);
-  let gen = null;
-  if (quads.length && S.ai) {
-    busy('Erasing frames with AI…\nthis can take 30–60 seconds');
+  if (!quads.length) return copyCanvas(photo);
+  if (S.ai) {
+    busy('Regenerating an empty wall with AI…\nthis can take up to a minute');
     try {
-      gen = await aiFill(photo, quads, pad);
+      return await aiFill(photo, quads, pad);
     } catch (e) {
       console.error(e);
       toast(`AI erase failed (${e.message}). Used quick fill instead.`, 6000);
     }
   }
-  if (quads.length && !gen) {
-    busy('Filling in the wall…');
-    await nextFrame();
-    gen = copyCanvas(photo);
-    quickFill(gen, quads.map((q) => quadBounds(q, pad * 2, W, H)));
-  }
-  if (gen) blendQuads(out, gen, quads, pad, Math.round(pad * 0.8));
-  S.clean = out;
+  busy('Filling in the wall…');
+  await nextFrame();
+  const out = copyCanvas(photo), gen = copyCanvas(photo);
+  quickFill(gen, quads.map((q) => quadBounds(q, pad * 2, W, H)));
+  blendQuads(out, gen, quads, pad, Math.round(pad * 0.8));
+  return out;
+}
+
+async function redoWall() {
+  const quads = S.boxes.filter((q) => quadSize(q).w > 2 && quadSize(q).h > 2);
+  S.clean = await makeCleanWall(quads);
+  busy('');
+  draw();
+  save();
+}
+
+async function eraseFrames() {
+  const photo = S.photo;
+  const quads = S.boxes.filter((q) => quadSize(q).w > 2 && quadSize(q).h > 2);
+  S.clean = await makeCleanWall(quads);
   // Cut each frame out and square it up; it keeps its true size and spot on the wall.
   S.pieces = quads.filter((q) => q.kind !== 'sheet').map((q, i) => {
     const { w, h } = quadSize(q);
@@ -420,6 +435,7 @@ function save() {
     try {
       await db.set('project', {
         photo: urlOf(S.photo), clean: urlOf(S.clean), pxPerInch: S.pxPerInch, scaleSource: S.scaleSource,
+        boxes: S.boxes.map((q) => ({ pts: q.map((p) => ({ x: p.x, y: p.y })), kind: q.kind || null })),
         pieces: S.pieces.map((p) => ({ url: urlOf(p.img), name: p.name, x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked, hidden: !!p.hidden })),
       });
     } catch (e) { console.warn('save failed', e); }
@@ -441,7 +457,7 @@ async function resume() {
         x: q.x, y: q.y, w: q.w, h: q.h, original: q.original, locked: q.locked, hidden: !!q.hidden,
       });
     }
-    S.boxes = [];
+    S.boxes = (p.boxes || []).map((b) => Object.assign(b.pts, b.kind ? { kind: b.kind } : {}));
     go('arrange');
   } catch (e) {
     toast('Could not load the saved wall.');
@@ -894,6 +910,7 @@ function updateBar() {
       btn('Done', () => { S.piece = null; updateBar(); draw(); });
     } else {
       btn(S.before ? 'Showing original' : 'Compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, S.before ? 'on' : '');
+      if (S.boxes.length) btn('↻ Redo wall', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
       btn('Save image', exportImage);
       btn('Start over', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
     }

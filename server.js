@@ -22,16 +22,27 @@ const env = { ...loadEnv(path.join(__dirname, '.env')), ...process.env };
 const API_KEY = env.openAIAPIKey || env.OPENAI_API_KEY || '';
 const MODEL = env.openAIImageModel || 'gpt-image-1.5';
 const FALLBACK_MODEL = 'gpt-image-1';
-const QUALITY = env.openAIImageQuality || 'medium';
+const QUALITY = env.openAIImageQuality || 'high';
 const PORT = Number(env.PORT || 3000);
 const PUBLIC = path.join(__dirname, 'public');
 const APP_PASSWORD = env.appPassword || env.APP_PASSWORD || '';
 
-const PROMPT =
-  'Remove every picture frame, artwork and photo inside the transparent masked areas. ' +
-  'Fill those areas with the plain, empty painted wall so it looks like nothing was ever hung there. ' +
-  'Match the surrounding wall paint color, lighting gradients, shadows and texture exactly. ' +
-  'Do not add any new objects, frames, nails, marks or text. Leave everything outside the mask unchanged.';
+// The whole photo is regenerated as an empty wall (not just patched holes), so lighting and
+// texture stay continuous. The mask only points at what to remove.
+function erasePrompt(hasSheet) {
+  const what = 'every framed picture, artwork, print, poster and photo hanging on the wall' +
+    (hasSheet ? ', and the printed paper sheet taped to the wall' : '');
+  return [
+    `Recreate this exact photo of the room, but remove ${what}, as if nothing had ever been hung there.`,
+    'The transparent areas of the mask show where those items are.',
+    'The wall must be one continuous, empty, freshly painted surface: same paint color and texture,',
+    'with the room\'s natural lighting (lamp glow, light falloff and soft shadows) flowing smoothly across',
+    'where the items were. No outlines, ghost marks, frame shadows, nail holes, patches or color shifts.',
+    'Keep everything else identical: same camera position, framing, perspective and lens,',
+    'same furniture, lamp, pillows, doors, trim, ceiling and floor, same colors and exposure.',
+    'Do not add anything new.',
+  ].join(' ');
+}
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -72,14 +83,15 @@ function authorized(req) {
 
 const dataUrlToBuffer = (u) => Buffer.from(String(u).split(',')[1] || '', 'base64');
 
-async function openAIEdit(model, image, mask, size) {
+async function openAIEdit(model, image, mask, size, prompt, fidelity) {
   const fd = new FormData();
   fd.append('model', model);
   fd.append('image', new Blob([image], { type: 'image/png' }), 'wall.png');
   fd.append('mask', new Blob([mask], { type: 'image/png' }), 'mask.png');
-  fd.append('prompt', PROMPT);
+  fd.append('prompt', prompt);
   fd.append('size', size);
   fd.append('quality', QUALITY);
+  if (fidelity) fd.append('input_fidelity', 'high'); // keep the room itself as close to the photo as possible
   fd.append('n', '1');
   const r = await fetch('https://api.openai.com/v1/images/edits', {
     method: 'POST',
@@ -92,17 +104,27 @@ async function openAIEdit(model, image, mask, size) {
 
 async function handleErase(req, res) {
   if (!API_KEY) return send(res, 503, { error: 'No OpenAI key. Add openAIAPIKey=... to .env' });
-  const { image, mask, size } = JSON.parse((await readBody(req)).toString('utf8'));
+  const { image, mask, size, hasSheet } = JSON.parse((await readBody(req)).toString('utf8'));
   const allowed = ['1024x1024', '1536x1024', '1024x1536'];
   const imgBuf = dataUrlToBuffer(image);
   const maskBuf = dataUrlToBuffer(mask);
   const sz = allowed.includes(size) ? size : 'auto';
 
-  let out = await openAIEdit(MODEL, imgBuf, maskBuf, sz);
+  const prompt = erasePrompt(!!hasSheet);
+  const errMsg = (o) => o.json?.error?.message || '';
+  let model = MODEL, fidelity = true;
+  let out = await openAIEdit(model, imgBuf, maskBuf, sz, prompt, fidelity);
+  // Not every model takes input_fidelity; drop it rather than fail.
+  if (!out.ok && /input_fidelity/i.test(errMsg(out))) {
+    fidelity = false;
+    out = await openAIEdit(model, imgBuf, maskBuf, sz, prompt, fidelity);
+  }
   // If the configured model isn't available on this account, fall back once.
-  if (!out.ok && MODEL !== FALLBACK_MODEL && /model/i.test(out.json?.error?.message || '')) {
-    console.warn(`Model ${MODEL} failed (${out.json.error.message}); retrying with ${FALLBACK_MODEL}`);
-    out = await openAIEdit(FALLBACK_MODEL, imgBuf, maskBuf, sz);
+  if (!out.ok && model !== FALLBACK_MODEL && /model/i.test(errMsg(out))) {
+    console.warn(`Model ${model} failed (${errMsg(out)}); retrying with ${FALLBACK_MODEL}`);
+    model = FALLBACK_MODEL;
+    out = await openAIEdit(model, imgBuf, maskBuf, sz, prompt, fidelity);
+    if (!out.ok && /input_fidelity/i.test(errMsg(out))) out = await openAIEdit(model, imgBuf, maskBuf, sz, prompt, false);
   }
   if (!out.ok) {
     const msg = out.json?.error?.message || `OpenAI error ${out.status}`;

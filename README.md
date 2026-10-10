@@ -30,14 +30,14 @@ The free plan sleeps after about 15 minutes of no use, so the first visit after 
 3. **Mark frames**: frames already on the wall are found automatically and shown as dashed suggestions; adjust or delete them, or drag a box around anything missed. Tap a box to select it, then drag any corner on its own to fit a slanted or odd-shaped frame. Each frame is squared up when it's cut out.
    - **✨ Auto-find on/off** turns the suggestions on or off. Turning it off removes the suggestions you haven't touched.
    - **📏 Ruler sheet on/off** turns the ruler sheet on or off. When it's found, it's outlined in purple and erased along with the frames.
-4. **Erase**: the boxes are sent to OpenAI's image edit API, which paints in the empty wall. Only the boxed areas are replaced (colour-matched and feathered), so the rest of the photo stays pixel-exact. Without a key, a simple local wall fill is used instead.
+4. **Erase**: the photo is sent to OpenAI's image edit API, which regenerates the whole scene as an empty wall, as if nothing had ever been hung, so the paint and lighting run continuously with no patch edges. Your boxes tell it what to remove. The frames themselves are cut from your original photo. Without a key, a simple local fill patches each spot instead.
 5. **Arrange**:
    - Drag frames around. They snap to line up with other frames and with the wall's centre; turn this off with **Snap on/off**.
    - **Layers** opens a strip of thumbnails at the bottom. Tap the eye to hide or show a picture (hidden ones are left out of the saved image), or tap a thumbnail to select it.
    - Frames that were already on the wall keep their **original size** (🔒). Tap *Size locked* to unlock one if you need to.
    - **+ Add picture**: photograph a new piece, drag the 4 dots to its corners (this crops it and fixes any slant), and it's added to the wall. If the scale is known, type its real size (e.g. 16 × 20 in) and it's placed at exactly that size; one number keeps its proportions. Otherwise resize it with the corner dot or a pinch.
    - **📏 Size**: no ruler sheet? Select an original frame and type its real width in inches to set the scale instead. Either way, every frame then shows its size in inches.
-   - **Compare** toggles back to the original photo. **Save image** exports the result (iPad share sheet → Save Image).
+   - **↻ Redo wall** regenerates the empty wall if you don't like the result; your arrangement stays put. **Compare** toggles back to the original photo. **Save image** exports the result (iPad share sheet → Save Image).
 
 Your work autosaves in the browser, so a Safari reload won't lose it (*Continue my last wall*).
 
@@ -47,7 +47,7 @@ Your work autosaves in the browser, so a Safari reload won't lose it (*Continue 
 |---|---|---|
 | `openAIAPIKey` | none | Required for AI erasing |
 | `openAIImageModel` | `gpt-image-1.5` | Falls back to `gpt-image-1` automatically if your account doesn't have it |
-| `openAIImageQuality` | `medium` | `low` / `medium` / `high` |
+| `openAIImageQuality` | `high` | `low` / `medium` / `high`. Lower is cheaper and faster, but the regenerated wall gets less detailed. |
 | `appPassword` | none | If set, the whole site asks for this password (any username). **Set it on any public deploy**, or anyone with the URL can spend your OpenAI credits. |
 | `PORT` | `3000` | |
 
