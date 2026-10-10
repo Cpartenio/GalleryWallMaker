@@ -13,6 +13,9 @@ const MAX_PIECE = 1400;  // longest side of an added picture
 const HANDLE = 15;       // handle radius in screen px
 const HIT = 32;          // touch hit radius in screen px
 
+function localGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function localSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
+
 const S = {
   step: 'start',
   ai: false,
@@ -28,6 +31,8 @@ const S = {
   before: false,
   add: null,        // {img, quad} while adding a new picture
   guides: [],
+  snap: localGet('gw.snap') !== 'off',
+  layersOpen: localGet('gw.layers') === 'open',
 };
 
 let view = { s: 1, ox: 0, oy: 0 };
@@ -193,10 +198,33 @@ function extractQuad(src, q) {
 }
 
 // ---------- erasing frames ----------
-function expandBox(b, pad, W, H) {
-  const x0 = clamp(Math.floor(b.x - pad), 0, W), y0 = clamp(Math.floor(b.y - pad), 0, H);
-  const x1 = clamp(Math.ceil(b.x + b.w + pad), 0, W), y1 = clamp(Math.ceil(b.y + b.h + pad), 0, H);
+// Each marked frame is a 4-corner outline [TL, TR, BR, BL]; corners can be dragged into any shape.
+function quadBounds(q, pad, W, H) {
+  const xs = q.map((p) => p.x), ys = q.map((p) => p.y);
+  const x0 = clamp(Math.floor(Math.min(...xs) - pad), 0, W), y0 = clamp(Math.floor(Math.min(...ys) - pad), 0, H);
+  const x1 = clamp(Math.ceil(Math.max(...xs) + pad), 0, W), y1 = clamp(Math.ceil(Math.max(...ys) + pad), 0, H);
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+// Signed distance to the outline's edges: > 0 inside, < 0 outside (mitered outside the corners).
+function quadDist(q, x, y) {
+  let area = 0;
+  for (let i = 0; i < 4; i++) { const a = q[i], b = q[(i + 1) % 4]; area += a.x * b.y - b.x * a.y; }
+  const sign = area > 0 ? -1 : 1;
+  let d = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i], b = q[(i + 1) % 4];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    d = Math.min(d, (sign * ((x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x))) / len);
+  }
+  return d;
+}
+function pointInQuad(p, q) {
+  let inside = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const a = q[i], b = q[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
 }
 function apiSize(w, h) {
   const r = w / h;
@@ -204,16 +232,26 @@ function apiSize(w, h) {
   if (r < 0.83) return [1024, 1536];
   return [1024, 1024];
 }
-async function aiFill(photo, regions) {
+async function aiFill(photo, quads, pad) {
   const [aw, ah] = apiSize(photo.width, photo.height);
-  const kx = aw / photo.width, ky = ah / photo.height;
   const img = mkCanvas(aw, ah);
   img.getContext('2d').drawImage(photo, 0, 0, aw, ah);
   const mask = mkCanvas(aw, ah);
   const mg = mask.getContext('2d');
   mg.fillStyle = '#000';
   mg.fillRect(0, 0, aw, ah);
-  for (const r of regions) mg.clearRect(r.x * kx - 2, r.y * ky - 2, r.w * kx + 4, r.h * ky + 4);
+  // Transparent = area the AI repaints: each outline grown by `pad`.
+  mg.globalCompositeOperation = 'destination-out';
+  mg.scale(aw / photo.width, ah / photo.height);
+  mg.lineJoin = 'miter';
+  mg.lineWidth = 2 * pad + 6;
+  for (const q of quads) {
+    mg.beginPath();
+    q.forEach((p, i) => (i ? mg.lineTo(p.x, p.y) : mg.moveTo(p.x, p.y)));
+    mg.closePath();
+    mg.fill();
+    mg.stroke();
+  }
   const res = await fetch('api/erase', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -228,44 +266,42 @@ async function aiFill(photo, regions) {
   g.drawImage(gen, 0, 0, full.width, full.height);
   return full;
 }
-function ringMean(data, W, H, r, t) {
-  const sum = [0, 0, 0];
-  let n = 0;
-  const x0 = Math.max(0, r.x - t), x1 = Math.min(W, r.x + r.w + t);
-  const y0 = Math.max(0, r.y - t), y1 = Math.min(H, r.y + r.h + t);
-  for (let y = y0; y < y1; y += 2) {
-    for (let x = x0; x < x1; x += 2) {
-      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) continue;
-      const i = (y * W + x) * 4;
-      sum[0] += data[i]; sum[1] += data[i + 1]; sum[2] += data[i + 2]; n++;
-    }
-  }
-  return n ? sum.map((v) => v / n) : null;
-}
-// Paste AI pixels into the padded regions only, colour-matched and feathered.
-function blendRegions(out, gen, regions, feather) {
+// Paste generated pixels into each outline (grown by pad) only, colour-matched and feathered.
+function blendQuads(out, gen, quads, pad, feather) {
   const W = out.width, H = out.height;
   const og = out.getContext('2d');
   const od = og.getImageData(0, 0, W, H);
   const o = od.data;
   const gd = gen.getContext('2d').getImageData(0, 0, W, H).data;
   const orig = new Uint8ClampedArray(o);
-  for (const r of regions) {
-    const mo = ringMean(orig, W, H, r, Math.max(6, feather));
-    const mg = ringMean(gd, W, H, r, Math.max(6, feather));
-    const delta = mo && mg ? [mo[0] - mg[0], mo[1] - mg[1], mo[2] - mg[2]] : [0, 0, 0];
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) {
-        const edge = Math.min(x - r.x, r.x + r.w - 1 - x, y - r.y, r.y + r.h - 1 - y);
-        const a = feather > 0 ? clamp(edge / feather, 0, 1) : 1;
+  const ring = Math.max(6, feather);
+  for (const q of quads) {
+    const bb = quadBounds(q, pad + ring, W, H);
+    // Match the generated wall's average colour to the real wall just outside the outline.
+    const mo = [0, 0, 0], mg = [0, 0, 0];
+    let n = 0;
+    for (let y = bb.y; y < bb.y + bb.h; y += 2) {
+      for (let x = bb.x; x < bb.x + bb.w; x += 2) {
+        const d = quadDist(q, x, y);
+        if (d >= -pad || d < -pad - ring) continue;
         const i = (y * W + x) * 4;
-        for (let c = 0; c < 3; c++) o[i + c] = orig[i + c] * (1 - a) + (gd[i + c] + delta[c]) * a;
+        for (let c = 0; c < 3; c++) { mo[c] += orig[i + c]; mg[c] += gd[i + c]; }
+        n++;
+      }
+    }
+    const delta = n ? [0, 1, 2].map((c) => (mo[c] - mg[c]) / n) : [0, 0, 0];
+    for (let y = bb.y; y < bb.y + bb.h; y++) {
+      for (let x = bb.x; x < bb.x + bb.w; x++) {
+        const a = clamp((quadDist(q, x + 0.5, y + 0.5) + pad) / Math.max(1, feather), 0, 1);
+        if (a <= 0) continue;
+        const i = (y * W + x) * 4;
+        for (let c = 0; c < 3; c++) o[i + c] = o[i + c] * (1 - a) + (gd[i + c] + delta[c]) * a;
       }
     }
   }
   og.putImageData(od, 0, 0);
 }
-// No-AI fallback: smooth Coons-patch fill from the wall just outside each box.
+// No-AI fallback: smooth Coons-patch fill of each rectangle from the wall just outside it.
 function quickFill(out, regions) {
   const W = out.width, H = out.height;
   const og = out.getContext('2d');
@@ -314,35 +350,36 @@ function quickFill(out, regions) {
 async function eraseFrames() {
   const photo = S.photo, W = photo.width, H = photo.height;
   const pad = Math.round(Math.max(W, H) * 0.012);
-  const regions = S.boxes.map((b) => expandBox(b, pad, W, H)).filter((r) => r.w > 2 && r.h > 2);
+  const quads = S.boxes.filter((q) => quadSize(q).w > 2 && quadSize(q).h > 2);
   const out = copyCanvas(photo);
-  let usedAI = false;
-  if (regions.length && S.ai) {
+  let gen = null;
+  if (quads.length && S.ai) {
     busy('Erasing frames with AI…\nthis can take 30–60 seconds');
     try {
-      const gen = await aiFill(photo, regions);
-      blendRegions(out, gen, regions, Math.round(pad * 0.8));
-      usedAI = true;
+      gen = await aiFill(photo, quads, pad);
     } catch (e) {
       console.error(e);
       toast(`AI erase failed (${e.message}). Used quick fill instead.`, 6000);
     }
   }
-  if (regions.length && !usedAI) {
+  if (quads.length && !gen) {
     busy('Filling in the wall…');
     await nextFrame();
-    quickFill(out, regions);
+    gen = copyCanvas(photo);
+    quickFill(gen, quads.map((q) => quadBounds(q, pad * 2, W, H)));
   }
+  if (gen) blendQuads(out, gen, quads, pad, Math.round(pad * 0.8));
   S.clean = out;
-  S.pieces = S.boxes.map((b) => {
-    const r = expandBox(b, 0, W, H);
-    const img = mkCanvas(r.w, r.h);
-    img.getContext('2d').drawImage(photo, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-    return { id: nextId++, img, x: r.x, y: r.y, w: r.w, h: r.h, original: true, locked: true };
-  });
+  // Cut each frame out and square it up; it keeps its true size and spot on the wall.
+  S.pieces = quads.map((q, i) => {
+    const { w, h } = quadSize(q);
+    const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4, cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
+    const img = extractQuad(photo, q);
+    return { id: nextId++, name: `Frame ${i + 1}`, img, x: cx - w / 2, y: cy - h / 2, w, h, original: true, locked: true, hidden: false };
+  }).filter((p) => p.img);
   S.piece = null;
   busy('');
-  if (!S.ai && regions.length) toast('Quick fill used (no AI key). Add openAIAPIKey to .env for a cleaner wall.', 5000);
+  if (!S.ai && quads.length) toast('Quick fill used (no AI key). Add openAIAPIKey to .env for a cleaner wall.', 5000);
   go('arrange');
   save();
 }
@@ -379,7 +416,7 @@ function save() {
     try {
       await db.set('project', {
         photo: urlOf(S.photo), clean: urlOf(S.clean), pxPerInch: S.pxPerInch,
-        pieces: S.pieces.map((p) => ({ url: urlOf(p.img), x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked })),
+        pieces: S.pieces.map((p) => ({ url: urlOf(p.img), name: p.name, x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked, hidden: !!p.hidden })),
       });
     } catch (e) { console.warn('save failed', e); }
   }, 600);
@@ -394,7 +431,10 @@ async function resume() {
     S.pxPerInch = p.pxPerInch || null;
     S.pieces = [];
     for (const q of p.pieces) {
-      S.pieces.push({ id: nextId++, img: await imageToCanvas(q.url, 1e9), x: q.x, y: q.y, w: q.w, h: q.h, original: q.original, locked: q.locked });
+      S.pieces.push({
+        id: nextId++, name: q.name || (q.original ? 'Frame' : 'Added'), img: await imageToCanvas(q.url, 1e9),
+        x: q.x, y: q.y, w: q.w, h: q.h, original: q.original, locked: q.locked, hidden: !!q.hidden,
+      });
     }
     S.boxes = [];
     go('arrange');
@@ -496,7 +536,6 @@ function drawLoupe(img, p) {
   ctx.strokeStyle = '#fff';
   ctx.stroke();
 }
-function boxCorners(b) { return rectPts(b.x, b.y, b.w, b.h); }
 function label(text, x, y, bg = '#2563eb') {
   ctx.font = '600 14px -apple-system, sans-serif';
   const w = ctx.measureText(text).width + 14;
@@ -531,16 +570,20 @@ function draw() {
 
   if (S.step === 'mark') {
     drawImageFit(img);
-    S.boxes.forEach((b, i) => {
-      const a = toScreen(b), sel = i === S.sel;
+    S.boxes.forEach((q, i) => {
+      const sel = i === S.sel;
+      ctx.beginPath();
+      q.forEach((p, k) => { const a = toScreen(p); k ? ctx.lineTo(a.x, a.y) : ctx.moveTo(a.x, a.y); });
+      ctx.closePath();
       ctx.fillStyle = sel ? 'rgba(37,99,235,0.18)' : 'rgba(234,88,12,0.18)';
-      ctx.fillRect(a.x, a.y, b.w * view.s, b.h * view.s);
+      ctx.fill();
       ctx.lineWidth = sel ? 3 : 2.5;
       ctx.strokeStyle = sel ? '#2563eb' : '#ea580c';
-      ctx.strokeRect(a.x, a.y, b.w * view.s, b.h * view.s);
+      ctx.stroke();
+      const a = toScreen({ x: Math.min(q[0].x, q[3].x), y: Math.min(q[0].y, q[1].y) });
       label(String(i + 1), a.x + 4, a.y + 4, sel ? '#2563eb' : '#ea580c');
     });
-    if (S.sel >= 0) boxCorners(S.boxes[S.sel]).forEach((p) => handle(p));
+    if (S.sel >= 0) S.boxes[S.sel].forEach((p) => handle(p));
     if (loupe) drawLoupe(img, loupe);
     return;
   }
@@ -549,6 +592,7 @@ function draw() {
     drawImageFit(img);
     if (S.before) return;
     for (const p of S.pieces) {
+      if (p.hidden) continue;
       const a = toScreen(p);
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0.35)';
@@ -601,20 +645,22 @@ function onDown(e) {
     if (i >= 0) { drag = { type: 'quad', q, i, dx: q[i].x - p.x, dy: q[i].y - p.y }; loupe = q[i]; }
   } else if (S.step === 'mark') {
     if (S.sel >= 0) {
-      const c = hitHandle(boxCorners(S.boxes[S.sel]), e);
-      if (c >= 0) {
-        const b = S.boxes[S.sel], corners = boxCorners(b);
-        drag = { type: 'corner', fixed: corners[(c + 2) % 4] };
-        loupe = corners[c];
+      // Selected outline: each corner moves on its own, so it can follow any shape.
+      const q = S.boxes[S.sel];
+      const c = hitHandle(q, e);
+      if (c >= 0) { drag = { type: 'quad', q, i: c, dx: q[c].x - p.x, dy: q[c].y - p.y }; loupe = q[c]; return; }
+    }
+    for (let i = S.boxes.length - 1; i >= 0; i--) {
+      if (pointInQuad(p, S.boxes[i])) {
+        S.sel = i;
+        drag = { type: 'moveBox', start: p, orig: S.boxes[i].map((c) => ({ ...c })) };
+        updateBar();
         return;
       }
     }
-    for (let i = S.boxes.length - 1; i >= 0; i--) {
-      if (inside(p, S.boxes[i])) { S.sel = i; drag = { type: 'moveBox', start: p, orig: { ...S.boxes[i] } }; updateBar(); return; }
-    }
-    S.boxes.push({ x: p.x, y: p.y, w: 0, h: 0 });
+    S.boxes.push(rectPts(p.x, p.y, 0, 0));
     S.sel = S.boxes.length - 1;
-    drag = { type: 'corner', fixed: p, isNew: true };
+    drag = { type: 'newBox', fixed: p, isNew: true };
     updateBar();
   } else if (S.step === 'arrange' && !S.before) {
     const sp = S.piece;
@@ -624,7 +670,7 @@ function onDown(e) {
     }
     for (let i = S.pieces.length - 1; i >= 0; i--) {
       const pc = S.pieces[i];
-      if (inside(p, pc)) { S.piece = pc; drag = { type: 'movePiece', piece: pc, start: p, ox: pc.x, oy: pc.y }; updateBar(); return; }
+      if (!pc.hidden && inside(p, pc)) { S.piece = pc; drag = { type: 'movePiece', piece: pc, start: p, ox: pc.x, oy: pc.y }; updateBar(); return; }
     }
     S.piece = null;
     updateBar();
@@ -632,11 +678,13 @@ function onDown(e) {
 }
 
 function snap(pc) {
+  S.guides = [];
+  if (!S.snap) return;
   const th = 10 / view.s;
   const wall = S.clean;
   const xs = [], ys = [];
   for (const o of S.pieces) {
-    if (o === pc) continue;
+    if (o === pc || o.hidden) continue;
     xs.push(o.x, o.x + o.w / 2, o.x + o.w);
     ys.push(o.y, o.y + o.h / 2, o.y + o.h);
   }
@@ -666,15 +714,17 @@ function onMove(e) {
     pt.x = clamp(p.x + drag.dx, 0, W);
     pt.y = clamp(p.y + drag.dy, 0, H);
     loupe = pt;
-  } else if (drag.type === 'corner') {
-    const b = S.boxes[S.sel], f = drag.fixed;
+  } else if (drag.type === 'newBox') {
+    const f = drag.fixed;
     const x = clamp(p.x, 0, W), y = clamp(p.y, 0, H);
-    Object.assign(b, { x: Math.min(x, f.x), y: Math.min(y, f.y), w: Math.abs(x - f.x), h: Math.abs(y - f.y) });
+    S.boxes[S.sel] = rectPts(Math.min(x, f.x), Math.min(y, f.y), Math.abs(x - f.x), Math.abs(y - f.y));
     loupe = { x, y };
   } else if (drag.type === 'moveBox') {
-    const b = S.boxes[S.sel], o = drag.orig;
-    b.x = clamp(o.x + p.x - drag.start.x, 0, W - b.w);
-    b.y = clamp(o.y + p.y - drag.start.y, 0, H - b.h);
+    const o = drag.orig;
+    const xs = o.map((c) => c.x), ys = o.map((c) => c.y);
+    const dx = clamp(p.x - drag.start.x, -Math.min(...xs), W - Math.max(...xs));
+    const dy = clamp(p.y - drag.start.y, -Math.min(...ys), H - Math.max(...ys));
+    S.boxes[S.sel] = o.map((c) => ({ x: c.x + dx, y: c.y + dy }));
   } else if (drag.type === 'movePiece') {
     const pc = drag.piece;
     pc.x = clamp(drag.ox + p.x - drag.start.x, -pc.w / 2, W - pc.w / 2);
@@ -690,8 +740,8 @@ function onMove(e) {
 
 function onUp() {
   if (drag?.isNew) {
-    const b = S.boxes[S.sel];
-    if (b.w * view.s < 12 || b.h * view.s < 12) S.boxes.splice(S.sel, 1);
+    const { w, h } = quadSize(S.boxes[S.sel]);
+    if (w * view.s < 12 || h * view.s < 12) S.boxes.splice(S.sel, 1);
     S.sel = -1; // so the next box drawn nearby doesn't grab this one's corner
   }
   if (S.step === 'arrange' && drag) save();
@@ -750,7 +800,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 const HINTS = {
   start: '',
   straighten: 'Optional: if the photo is taken at an angle, drag the 4 dots onto the corners of something that should be a rectangle (a big frame works best). Then tap Straighten — or Skip.',
-  mark: 'Drag a box around each frame on the wall. Tap a box to adjust or delete it.',
+  mark: 'Drag a box around each frame. Tap a box to select it, then drag its corners to fit slanted or odd-shaped frames.',
   arrange: 'Drag pictures to move them. Pictures you add can be resized with the corner dot or a pinch.',
   add: 'Drag the 4 dots onto the corners of the picture (this also fixes any slant).',
 };
@@ -771,6 +821,7 @@ function go(step) {
 
 function updateBar() {
   $('#hint').textContent = HINTS[S.step] || '';
+  renderLayers();
   const bar = $('#bar');
   bar.innerHTML = '';
   const btn = (text, fn, cls = '', disabled = false) => {
@@ -810,21 +861,87 @@ function updateBar() {
   } else if (S.step === 'arrange') {
     const p = S.piece;
     btn('+ Add picture', addPicture, 'primary');
+    btn('Layers', () => { S.layersOpen = !S.layersOpen; localSet('gw.layers', S.layersOpen ? 'open' : 'closed'); updateBar(); resize(); }, S.layersOpen ? 'on' : '');
+    btn(S.snap ? 'Snap on' : 'Snap off', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, S.snap ? 'on' : '');
+    spacer();
     if (p) {
+      // A picture is selected: show its actions in place of the wall-wide ones.
       if (p.original) btn(p.locked ? '🔒 Size locked' : '🔓 Resizable', () => { p.locked = !p.locked; save(); updateBar(); draw(); });
       btn('📏 Size', () => setSize(p));
-      btn('Bring forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); draw(); });
-      btn('Remove', () => { S.pieces = S.pieces.filter((x) => x !== p); S.piece = null; save(); updateBar(); draw(); }, 'danger');
+      btn('Forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); updateBar(); draw(); });
+      btn('Hide', () => setHidden(p, true));
+      btn('Remove', () => {
+        if (!confirm(`Remove ${p.name || 'this picture'} from the wall? (Hide keeps it in Layers.)`)) return;
+        S.pieces = S.pieces.filter((x) => x !== p); S.piece = null; save(); updateBar(); draw();
+      }, 'danger');
+      btn('Done', () => { S.piece = null; updateBar(); draw(); });
+    } else {
+      btn(S.before ? 'Showing original' : 'Compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, S.before ? 'on' : '');
+      btn('Save image', exportImage);
+      btn('Start over', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
     }
-    spacer();
-    btn(S.before ? 'Showing original' : 'Compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, S.before ? 'on' : '');
-    btn('Save image', exportImage);
-    btn('Start over', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
   } else if (S.step === 'add') {
     btn('Cancel', () => { S.add = null; go('arrange'); });
     btn('Reset dots', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
     spacer();
     btn('Add to wall ✓', placeNewPiece, 'primary');
+  }
+}
+
+// ---------- layers panel ----------
+const EYE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
+function thumbOf(p) {
+  if (!p.img._thumb) {
+    const k = 120 / Math.max(p.img.width, p.img.height);
+    const c = mkCanvas(p.img.width * k, p.img.height * k);
+    c.getContext('2d').drawImage(p.img, 0, 0, c.width, c.height);
+    p.img._thumb = c.toDataURL('image/jpeg', 0.8);
+  }
+  return p.img._thumb;
+}
+function setHidden(p, hidden) {
+  p.hidden = hidden;
+  if (hidden && S.piece === p) S.piece = null;
+  save();
+  updateBar();
+  draw();
+}
+function renderLayers() {
+  const el = $('#layers');
+  const open = S.step === 'arrange' && S.layersOpen;
+  if (el.hidden === open) { el.hidden = !open; requestAnimationFrame(resize); }
+  if (!open) return;
+  el.innerHTML = '';
+  const hiddenCount = S.pieces.filter((p) => p.hidden).length;
+  if (hiddenCount) {
+    const all = document.createElement('button');
+    all.className = 'showall';
+    all.textContent = `Show all (${hiddenCount} hidden)`;
+    all.onclick = () => { S.pieces.forEach((p) => (p.hidden = false)); save(); updateBar(); draw(); };
+    el.appendChild(all);
+  }
+  if (!S.pieces.length) {
+    el.appendChild(Object.assign(document.createElement('p'), { className: 'empty', textContent: 'No pictures yet — tap + Add picture.' }));
+  }
+  // Top-most picture first, like a layers list.
+  for (const p of [...S.pieces].reverse()) {
+    const card = document.createElement('div');
+    card.className = 'layer' + (p === S.piece ? ' sel' : '') + (p.hidden ? ' off' : '');
+    const pick = document.createElement('button');
+    pick.className = 'pick';
+    pick.innerHTML = `<img alt=""><span></span>`;
+    pick.querySelector('img').src = thumbOf(p);
+    pick.querySelector('span').textContent = p.name || (p.original ? 'Frame' : 'Added');
+    pick.onclick = () => { if (p.hidden) p.hidden = false; S.piece = p; save(); updateBar(); draw(); };
+    const eye = document.createElement('button');
+    eye.className = 'eye';
+    eye.innerHTML = p.hidden ? EYE_OFF : EYE;
+    eye.setAttribute('aria-label', p.hidden ? 'Show' : 'Hide');
+    eye.onclick = () => setHidden(p, !p.hidden);
+    card.append(pick, eye);
+    el.appendChild(card);
   }
 }
 
@@ -870,7 +987,8 @@ async function placeNewPiece() {
   const wall = S.clean;
   let w = wall.width * 0.22, h = (w * img.height) / img.width;
   if (h > wall.height * 0.35) { h = wall.height * 0.35; w = (h * img.width) / img.height; }
-  const pc = { id: nextId++, img, x: (wall.width - w) / 2, y: (wall.height - h) / 2 - wall.height * 0.1, w, h, original: false, locked: false };
+  const added = S.pieces.filter((x) => !x.original).length + 1;
+  const pc = { id: nextId++, name: `Added ${added}`, img, x: (wall.width - w) / 2, y: (wall.height - h) / 2 - wall.height * 0.1, w, h, original: false, locked: false, hidden: false };
   S.pieces.push(pc);
   S.piece = pc;
   go('arrange');
@@ -910,7 +1028,7 @@ async function exportImage() {
   const out = copyCanvas(wall);
   const g = out.getContext('2d');
   const k = Math.max(wall.width, wall.height) / 1000;
-  for (const p of S.pieces) {
+  for (const p of S.pieces.filter((x) => !x.hidden)) {
     g.save();
     g.shadowColor = 'rgba(0,0,0,0.35)';
     g.shadowBlur = 14 * k;

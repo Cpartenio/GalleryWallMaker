@@ -26,10 +26,11 @@ The free plan sleeps after about 15 minutes of no use, so the first visit after 
 
 1. **Photo**: take or choose a photo of the wall (or tap *Try the sample wall*).
 2. **Straighten** (optional): if the photo was taken at an angle, drag the 4 dots onto the corners of something rectangular (a big frame), then tap *Straighten*. A magnifier shows what's under your finger.
-3. **Mark frames**: drag a box around each frame. Tap a box to adjust or delete it.
+3. **Mark frames**: drag a box around each frame. Tap a box to select it, then drag any corner on its own to fit a slanted or odd-shaped frame. Each frame is squared up when it's cut out.
 4. **Erase**: the boxes are sent to OpenAI's image edit API, which paints in the empty wall. Only the boxed areas are replaced (colour-matched and feathered), so the rest of the photo stays pixel-exact. Without a key, a simple local wall fill is used instead.
 5. **Arrange**:
-   - Drag frames around. They snap to line up with other frames and with the wall's centre.
+   - Drag frames around. They snap to line up with other frames and with the wall's centre; turn this off with **Snap on/off**.
+   - **Layers** opens a strip of thumbnails at the bottom. Tap the eye to hide or show a picture (hidden ones are left out of the saved image), or tap a thumbnail to select it.
    - Frames that were already on the wall keep their **original size** (🔒). Tap *Size locked* to unlock one if you need to.
    - **+ Add picture**: photograph a new piece, drag the 4 dots to its corners (this crops it and fixes any slant), and it's added to the wall. Resize it with the corner dot or a pinch.
    - **📏 Size**: select an original frame and type its real width in inches to set the scale. After that, every frame shows its size in inches, and you can type an exact width for new pieces.
