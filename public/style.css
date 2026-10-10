@@ -39,12 +39,17 @@ button {
   font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid var(--line);
   border-radius: 12px; padding: 0 18px; min-height: 50px; cursor: pointer; white-space: nowrap;
 }
-button:active { transform: scale(0.97); }
+a.button {
+  display: inline-flex; align-items: center; justify-content: center; text-decoration: none; color: var(--ink);
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; font-weight: 600;
+}
+.panel a.big { font-size: 19px; min-height: 62px; margin-top: 10px; }
+button:active, a.button:active { transform: scale(0.97); }
 button:disabled { opacity: 0.4; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 button.danger { color: var(--danger); }
 button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-button.big { width: min(420px, 100%); min-height: 62px; font-size: 19px; }
+.big { width: min(420px, 100%); min-height: 62px; font-size: 19px; }
 
 #bar {
   display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line);
@@ -52,6 +57,12 @@ button.big { width: min(420px, 100%); min-height: 62px; font-size: 19px; }
 }
 #bar:empty { display: none; }
 #bar .spacer { flex: 1; }
+#bar .size { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+#bar .size.muted { color: var(--muted); font-weight: 400; font-size: 15px; white-space: normal; max-width: 260px; }
+#bar .size input {
+  width: 64px; min-height: 50px; font: inherit; text-align: center; border: 1px solid var(--line);
+  border-radius: 10px; background: #fff; -webkit-user-select: text; user-select: text;
+}
 
 #layers {
   display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line);

@@ -29,6 +29,8 @@
       <button class="big primary" id="pickWall">📷 Take or choose a wall photo</button>
       <button class="big" id="sampleWall">Try the sample wall</button>
       <button class="big" id="resume" hidden>↩︎ Continue my last wall</button>
+      <a class="big button" href="ruler-sheet.pdf" target="_blank" rel="noopener">🖨 Print the ruler sheet</a>
+      <p class="small">Optional: tape it to the wall before your photo, and new pictures can be sized in real inches.</p>
       <p class="small" id="aiStatus"></p>
     </section>
   </main>
@@ -39,6 +41,9 @@
   <div id="busy" hidden><div class="spinner"></div><p id="busyText">Working…</p></div>
   <div id="toast" hidden></div>
   <input type="file" id="file" accept="image/*" hidden>
+  <script src="vendor/cv.js"></script>
+  <script src="vendor/aruco.js"></script>
   <script src="app.js"></script>
+  <script src="detect.js"></script>
 </body>
 </html>

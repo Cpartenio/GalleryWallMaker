@@ -33,6 +33,10 @@ const S = {
   guides: [],
   snap: localGet('gw.snap') !== 'off',
   layersOpen: localGet('gw.layers') === 'open',
+  autoFind: localGet('gw.autofind') !== 'off',  // suggest outlines for frames already on the wall
+  rulerOn: localGet('gw.ruler') !== 'off',      // look for the printed ruler sheet to get real sizes
+  sheet: undefined,                             // ruler sheet result: object, null (not found) or undefined (not looked)
+  scaleSource: null,                            // 'sheet' | 'manual'
 };
 
 let view = { s: 1, ox: 0, oy: 0 };
@@ -371,7 +375,7 @@ async function eraseFrames() {
   if (gen) blendQuads(out, gen, quads, pad, Math.round(pad * 0.8));
   S.clean = out;
   // Cut each frame out and square it up; it keeps its true size and spot on the wall.
-  S.pieces = quads.map((q, i) => {
+  S.pieces = quads.filter((q) => q.kind !== 'sheet').map((q, i) => {
     const { w, h } = quadSize(q);
     const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4, cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
     const img = extractQuad(photo, q);
@@ -415,7 +419,7 @@ function save() {
     if (!S.clean) return;
     try {
       await db.set('project', {
-        photo: urlOf(S.photo), clean: urlOf(S.clean), pxPerInch: S.pxPerInch,
+        photo: urlOf(S.photo), clean: urlOf(S.clean), pxPerInch: S.pxPerInch, scaleSource: S.scaleSource,
         pieces: S.pieces.map((p) => ({ url: urlOf(p.img), name: p.name, x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked, hidden: !!p.hidden })),
       });
     } catch (e) { console.warn('save failed', e); }
@@ -429,6 +433,7 @@ async function resume() {
     S.raw = S.photo;
     S.clean = await imageToCanvas(p.clean, 1e9);
     S.pxPerInch = p.pxPerInch || null;
+    S.scaleSource = p.scaleSource || (S.pxPerInch ? 'manual' : null);
     S.pieces = [];
     for (const q of p.pieces) {
       S.pieces.push({
@@ -570,18 +575,22 @@ function draw() {
 
   if (S.step === 'mark') {
     drawImageFit(img);
+    let frameNo = 0;
     S.boxes.forEach((q, i) => {
-      const sel = i === S.sel;
+      const sel = i === S.sel, sheet = q.kind === 'sheet';
+      const color = sel ? '#2563eb' : sheet ? '#7c3aed' : '#ea580c';
       ctx.beginPath();
       q.forEach((p, k) => { const a = toScreen(p); k ? ctx.lineTo(a.x, a.y) : ctx.moveTo(a.x, a.y); });
       ctx.closePath();
-      ctx.fillStyle = sel ? 'rgba(37,99,235,0.18)' : 'rgba(234,88,12,0.18)';
+      ctx.fillStyle = sel ? 'rgba(37,99,235,0.18)' : sheet ? 'rgba(124,58,237,0.16)' : 'rgba(234,88,12,0.18)';
       ctx.fill();
       ctx.lineWidth = sel ? 3 : 2.5;
-      ctx.strokeStyle = sel ? '#2563eb' : '#ea580c';
+      ctx.strokeStyle = color;
+      if (q.suggested) ctx.setLineDash([8, 6]); // dashed = suggested, not yet touched
       ctx.stroke();
+      ctx.setLineDash([]);
       const a = toScreen({ x: Math.min(q[0].x, q[3].x), y: Math.min(q[0].y, q[1].y) });
-      label(String(i + 1), a.x + 4, a.y + 4, sel ? '#2563eb' : '#ea580c');
+      label(sheet ? 'Ruler sheet' : String(++frameNo), a.x + 4, a.y + 4, color);
     });
     if (S.sel >= 0) S.boxes[S.sel].forEach((p) => handle(p));
     if (loupe) drawLoupe(img, loupe);
@@ -648,7 +657,7 @@ function onDown(e) {
       // Selected outline: each corner moves on its own, so it can follow any shape.
       const q = S.boxes[S.sel];
       const c = hitHandle(q, e);
-      if (c >= 0) { drag = { type: 'quad', q, i: c, dx: q[c].x - p.x, dy: q[c].y - p.y }; loupe = q[c]; return; }
+      if (c >= 0) { q.suggested = false; drag = { type: 'quad', q, i: c, dx: q[c].x - p.x, dy: q[c].y - p.y }; loupe = q[c]; return; }
     }
     for (let i = S.boxes.length - 1; i >= 0; i--) {
       if (pointInQuad(p, S.boxes[i])) {
@@ -724,7 +733,9 @@ function onMove(e) {
     const xs = o.map((c) => c.x), ys = o.map((c) => c.y);
     const dx = clamp(p.x - drag.start.x, -Math.min(...xs), W - Math.max(...xs));
     const dy = clamp(p.y - drag.start.y, -Math.min(...ys), H - Math.max(...ys));
-    S.boxes[S.sel] = o.map((c) => ({ x: c.x + dx, y: c.y + dy }));
+    const q = S.boxes[S.sel];
+    if (dx || dy) q.suggested = false;
+    o.forEach((c, k) => { q[k].x = c.x + dx; q[k].y = c.y + dy; });
   } else if (drag.type === 'movePiece') {
     const pc = drag.piece;
     pc.x = clamp(drag.ox + p.x - drag.start.x, -pc.w / 2, W - pc.w / 2);
@@ -800,7 +811,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 const HINTS = {
   start: '',
   straighten: 'Optional: if the photo is taken at an angle, drag the 4 dots onto the corners of something that should be a rectangle (a big frame works best). Then tap Straighten — or Skip.',
-  mark: 'Drag a box around each frame. Tap a box to select it, then drag its corners to fit slanted or odd-shaped frames.',
+  mark: 'Drag a box around each frame. Tap a box to select it, then drag its corners to fit slanted or odd-shaped frames. Dashed boxes are suggestions: adjust or delete them.',
   arrange: 'Drag pictures to move them. Pictures you add can be resized with the corner dot or a pinch.',
   add: 'Drag the 4 dots onto the corners of the picture (this also fixes any slant).',
 };
@@ -839,7 +850,7 @@ function updateBar() {
     btn('← New photo', () => go('start'));
     btn('Reset dots', () => { S.quad = defaultQuad(S.raw, 0.2); draw(); });
     spacer();
-    btn('Skip', () => { S.photo = S.raw; S.boxes = []; S.sel = -1; go('mark'); });
+    btn('Skip', () => { S.photo = S.raw; S.boxes = []; S.sel = -1; go('mark'); analyzeWall(); });
     btn('Straighten ✓', async () => {
       busy('Straightening…');
       await nextFrame();
@@ -848,6 +859,7 @@ function updateBar() {
       if (!out) return toast('That shape is too extreme to straighten — try placing the dots again.');
       S.photo = out; S.boxes = []; S.sel = -1;
       go('mark');
+      analyzeWall();
     }, 'primary');
   } else if (S.step === 'mark') {
     btn('← Straighten', () => {
@@ -855,9 +867,14 @@ function updateBar() {
       go('straighten');
     });
     if (S.sel >= 0) btn('Delete box', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, 'danger');
+    btn(S.autoFind ? '✨ Auto-find on' : '✨ Auto-find off', () => setAutoFind(!S.autoFind), S.autoFind ? 'on' : '');
+    const rulerLabel = !S.rulerOn ? '📏 Ruler sheet off' : S.sheet ? '📏 Ruler sheet found' : '📏 Ruler sheet: none';
+    btn(rulerLabel, () => setRuler(!S.rulerOn), S.rulerOn ? 'on' : '');
     spacer();
-    const n = S.boxes.length;
-    btn(n ? `Erase ${n} frame${n > 1 ? 's' : ''} ${S.ai ? '✨' : '(quick fill)'}` : 'Wall is empty → Next', () => { S.sel = -1; eraseFrames(); }, 'primary');
+    const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
+    const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
+    const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
+    btn(what ? `Erase ${what} ${S.ai ? '✨' : '(quick fill)'}` : 'Wall is empty → Next', () => { S.sel = -1; eraseFrames(); }, 'primary');
   } else if (S.step === 'arrange') {
     const p = S.piece;
     btn('+ Add picture', addPicture, 'primary');
@@ -884,8 +901,101 @@ function updateBar() {
     btn('Cancel', () => { S.add = null; go('arrange'); });
     btn('Reset dots', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
     spacer();
+    const size = document.createElement('label');
+    size.className = 'size';
+    if (S.pxPerInch) {
+      size.innerHTML = 'Real size <input id="addW" inputmode="decimal" placeholder="W"> × <input id="addH" inputmode="decimal" placeholder="H"> in';
+    } else {
+      size.textContent = 'For real sizes, use the ruler sheet or 📏 Size on a frame';
+      size.classList.add('muted');
+    }
+    bar.appendChild(size);
     btn('Add to wall ✓', placeNewPiece, 'primary');
   }
+}
+
+// ---------- auto-find & ruler sheet ----------
+function sheetBox() { return S.boxes.find((q) => q.kind === 'sheet'); }
+function runRuler() {
+  S.boxes = S.boxes.filter((q) => q.kind !== 'sheet');
+  S.sheet = findRulerSheet(S.photo);
+  if (S.sheet) {
+    const q = S.sheet.quad;
+    q.kind = 'sheet';
+    S.boxes.unshift(q);
+    if (S.scaleSource !== 'manual') { S.pxPerInch = S.sheet.pxPerInch; S.scaleSource = 'sheet'; }
+  }
+  return S.sheet;
+}
+function runAutoFind() {
+  const sheet = sheetBox();
+  const found = detectFrames(S.photo, sheet ? [sheet] : []);
+  let added = 0;
+  for (const q of found) {
+    const c = { x: (q[0].x + q[2].x) / 2, y: (q[0].y + q[2].y) / 2 };
+    if (S.boxes.some((o) => pointInQuad(c, o))) continue; // already marked
+    q.suggested = true;
+    S.boxes.push(q);
+    added++;
+  }
+  return added;
+}
+// Runs once when a new photo reaches the Mark step.
+async function analyzeWall() {
+  if (!S.autoFind && !S.rulerOn) return;
+  busy(S.rulerOn ? 'Looking for frames and the ruler sheet…' : 'Looking for frames…');
+  await nextFrame();
+  const msgs = [];
+  try {
+    if (S.rulerOn) {
+      const r = runRuler();
+      if (r) msgs.push(`Ruler sheet found: sizes are in real inches${r.edgesFound ? '' : ' (assuming it printed at 100%)'}.`);
+    }
+    if (S.autoFind) {
+      const n = runAutoFind();
+      msgs.unshift(n ? `Found ${n} frame${n > 1 ? 's' : ''}. Check the dashed boxes.` : 'No frames found automatically. Drag boxes around them.');
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  busy('');
+  updateBar();
+  draw();
+  if (msgs.length) toast(msgs.join(' '), 5000);
+}
+async function setAutoFind(on) {
+  S.autoFind = on;
+  localSet('gw.autofind', on ? 'on' : 'off');
+  if (on) {
+    busy('Looking for frames…');
+    await nextFrame();
+    const n = runAutoFind();
+    busy('');
+    toast(n ? `Found ${n} frame${n > 1 ? 's' : ''}.` : 'No new frames found.');
+  } else {
+    S.boxes = S.boxes.filter((q) => !q.suggested); // keeps any you adjusted or drew
+  }
+  S.sel = -1;
+  updateBar();
+  draw();
+}
+async function setRuler(on) {
+  S.rulerOn = on;
+  localSet('gw.ruler', on ? 'on' : 'off');
+  if (on) {
+    busy('Looking for the ruler sheet…');
+    await nextFrame();
+    const r = runRuler();
+    busy('');
+    toast(r ? 'Ruler sheet found: sizes are in real inches.' : 'No ruler sheet in this photo. Print it from the start screen, tape it up and retake the photo.', 5000);
+  } else {
+    S.boxes = S.boxes.filter((q) => q.kind !== 'sheet');
+    S.sheet = undefined;
+    if (S.scaleSource === 'sheet') { S.pxPerInch = null; S.scaleSource = null; }
+  }
+  S.sel = -1;
+  updateBar();
+  draw();
 }
 
 // ---------- layers panel ----------
@@ -952,6 +1062,7 @@ async function startWithSource(getCanvas) {
     const c = await getCanvas();
     if (!c) return;
     S.raw = c; S.photo = c; S.boxes = []; S.sel = -1; S.pieces = []; S.clean = null; S.pxPerInch = null;
+    S.sheet = undefined; S.scaleSource = null;
     S.quad = defaultQuad(c, 0.2);
     db.del('project').catch(() => {});
     go('straighten');
@@ -983,17 +1094,24 @@ async function placeNewPiece() {
   const img = extractQuad(S.add.img, S.add.quad);
   busy('');
   if (!img) return toast('Could not cut that out — try placing the dots again.');
+  const inW = parseFloat($('#addW')?.value), inH = parseFloat($('#addH')?.value);
   S.add = null;
   const wall = S.clean;
   let w = wall.width * 0.22, h = (w * img.height) / img.width;
   if (h > wall.height * 0.35) { h = wall.height * 0.35; w = (h * img.width) / img.height; }
+  const sized = S.pxPerInch && (inW > 0 || inH > 0);
+  if (sized) {
+    // Real dimensions typed in: one number keeps the photo's proportions, two set both exactly.
+    w = inW > 0 ? inW * S.pxPerInch : (inH * S.pxPerInch * img.width) / img.height;
+    h = inH > 0 ? inH * S.pxPerInch : (w * img.height) / img.width;
+  }
   const added = S.pieces.filter((x) => !x.original).length + 1;
   const pc = { id: nextId++, name: `Added ${added}`, img, x: (wall.width - w) / 2, y: (wall.height - h) / 2 - wall.height * 0.1, w, h, original: false, locked: false, hidden: false };
   S.pieces.push(pc);
   S.piece = pc;
   go('arrange');
   save();
-  toast(S.pxPerInch ? 'Tap 📏 Size to set its real size.' : 'Drag the corner dot (or pinch) to resize it.');
+  toast(sized ? `Added at ${inches(w)} × ${inches(h)}.` : S.pxPerInch ? 'Tap 📏 Size to set its real size.' : 'Drag the corner dot (or pinch) to resize it.');
 }
 
 function setSize(p) {
@@ -1005,11 +1123,13 @@ function setSize(p) {
     const v = parseFloat(prompt('How wide is this frame, in inches? (sets the scale for everything)'));
     if (!(v > 0)) return;
     S.pxPerInch = p.w / v;
+    S.scaleSource = 'manual';
     toast(`Scale set. This frame is ${inches(p.w)} × ${inches(p.h)}.`);
   } else if (p.locked) {
     const v = parseFloat(prompt(`Correct the scale: how wide is this frame in inches? (now ${inches(p.w)})`));
     if (!(v > 0)) return;
     S.pxPerInch = p.w / v;
+    S.scaleSource = 'manual';
   } else {
     const v = parseFloat(prompt(`Real width of this picture, in inches? (now ${inches(p.w)})`));
     if (!(v > 0)) return;
