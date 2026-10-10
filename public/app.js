@@ -40,6 +40,13 @@ const S = {
 };
 
 let view = { s: 1, ox: 0, oy: 0 };
+// Zoom on top of the fitted view: screen = fitted * k + (x, y).
+let zoom = { k: 1, x: 0, y: 0 };
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const COMPACT = matchMedia('(max-width: 700px), (max-height: 560px)');
+// Short button labels on phones: "Long label|Short".
+const L = (text) => { const [long, short] = text.split('|'); return COMPACT.matches && short ? short : long; };
+COMPACT.addEventListener?.('change', () => updateBar());
 let drag = null;
 let loupe = null;
 let nextId = 1;
@@ -477,10 +484,27 @@ function fitView() {
   const img = currentImage();
   if (!img) return;
   const r = stage.getBoundingClientRect();
-  const m = 28;
+  const m = r.width < 700 || r.height < 500 ? 10 : 28;
   const s = Math.min((r.width - 2 * m) / img.width, (r.height - 2 * m) / img.height);
-  view = { s, ox: (r.width - img.width * s) / 2, oy: (r.height - img.height * s) / 2 };
+  const ox = (r.width - img.width * s) / 2, oy = (r.height - img.height * s) / 2;
+  view = { s: s * zoom.k, ox: ox * zoom.k + zoom.x, oy: oy * zoom.k + zoom.y };
 }
+// Zoom by factor f keeping screen point (mx, my) fixed.
+function zoomAt(f, mx, my) {
+  const k = clamp(zoom.k * f, 1, 8);
+  f = k / zoom.k;
+  zoom = { k, x: mx - (mx - zoom.x) * f, y: my - (my - zoom.y) * f };
+  if (k === 1) zoom = { k: 1, x: 0, y: 0 };
+  updateZoomUI();
+  draw();
+}
+function resetZoom() { zoom = { k: 1, x: 0, y: 0 }; updateZoomUI(); }
+function updateZoomUI() {
+  const el = $('#zoom');
+  el.hidden = !['straighten', 'mark', 'arrange', 'add'].includes(S.step);
+  el.classList.toggle('zoomed', zoom.k > 1.001);
+}
+function stageCenter() { const r = stage.getBoundingClientRect(); return [r.width / 2, r.height / 2]; }
 const toScreen = (p) => ({ x: view.ox + p.x * view.s, y: view.oy + p.y * view.s });
 function toImg(e) {
   const r = stage.getBoundingClientRect();
@@ -783,13 +807,18 @@ stage.addEventListener('pointerdown', (e) => {
   stage.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) {
-    // Two fingers: pinch-resize the selected (unlocked) piece.
+    // Two fingers: pinch-resize the selected added picture if the pinch is on it, otherwise zoom/pan.
     const pc = S.piece;
     if (drag?.isNew) { S.boxes.splice(S.sel, 1); S.sel = -1; }
     drag = null; loupe = null;
-    if (S.step === 'arrange' && pc && !pc.locked) {
-      const [a, b] = [...pointers.values()];
+    const [a, b] = [...pointers.values()];
+    const r = stage.getBoundingClientRect();
+    const mid = { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+    const midImg = { x: (mid.x - view.ox) / view.s, y: (mid.y - view.oy) / view.s };
+    if (S.step === 'arrange' && pc && !pc.locked && inside(midImg, pc)) {
       pinch = { pc, d0: dist(a, b), w0: pc.w, h0: pc.h, cx: pc.x + pc.w / 2, cy: pc.y + pc.h / 2 };
+    } else {
+      pinch = { view: true, d0: dist(a, b), k0: zoom.k, x0: zoom.x, y0: zoom.y, m0: mid };
     }
     draw();
     return;
@@ -799,6 +828,18 @@ stage.addEventListener('pointerdown', (e) => {
 stage.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch?.view && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const r = stage.getBoundingClientRect();
+    const m = { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+    const k = clamp(pinch.k0 * (dist(a, b) / pinch.d0), 1, 8);
+    // Keep the photo point that was under the fingers under them.
+    const u = { x: (pinch.m0.x - pinch.x0) / pinch.k0, y: (pinch.m0.y - pinch.y0) / pinch.k0 };
+    zoom = k <= 1.001 ? { k: 1, x: 0, y: 0 } : { k, x: m.x - u.x * k, y: m.y - u.y * k };
+    updateZoomUI();
+    draw();
+    return;
+  }
   if (pinch && pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     const k = Math.max(0.1, dist(a, b) / pinch.d0);
@@ -814,27 +855,88 @@ stage.addEventListener('pointermove', (e) => {
 });
 function endPointer(e) {
   if (!pointers.delete(e.pointerId)) return;
-  if (pinch) { if (pointers.size === 0) { pinch = null; save(); updateBar(); draw(); } return; }
+  if (pinch) { if (pointers.size === 0) { if (!pinch.view) save(); pinch = null; updateBar(); draw(); } return; }
   if (pointers.size === 0) onUp(e);
 }
 stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
+// Desktop: Ctrl/⌘ + scroll (or trackpad pinch) zooms, plain scroll pans.
+stage.addEventListener('wheel', (e) => {
+  if (S.step === 'start') return;
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  const unit = e.deltaMode === 1 ? 16 : 1;
+  if (e.ctrlKey || e.metaKey) {
+    // Trackpad pinches send small deltas, mouse wheels big ones: cap each step so a notch is ~1.6×.
+    zoomAt(Math.exp(-clamp(e.deltaY * unit, -50, 50) * 0.01), e.clientX - r.left, e.clientY - r.top);
+  } else if (zoom.k > 1) {
+    zoom.x -= e.deltaX * unit; zoom.y -= e.deltaY * unit;
+    draw();
+  }
+}, { passive: false });
+document.querySelectorAll('#zoom button').forEach((b) => {
+  b.onclick = () => {
+    if (b.dataset.z === 'fit') { resetZoom(); draw(); } else zoomAt(b.dataset.z === 'in' ? 1.5 : 1 / 1.5, ...stageCenter());
+  };
+});
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, textarea') || !$('#busy').hidden) return;
+  if (e.key === 'Escape') {
+    S.sel = -1; S.piece = null; updateBar(); draw();
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && S.step === 'mark' && S.sel >= 0) {
+    e.preventDefault(); S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw();
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && S.step === 'arrange' && S.piece) {
+    e.preventDefault(); setHidden(S.piece, true);
+  } else if (e.key.startsWith('Arrow') && S.step === 'arrange' && S.piece) {
+    e.preventDefault();
+    const d = (e.shiftKey ? 10 : 1) / view.s;
+    const p = S.piece;
+    if (e.key === 'ArrowLeft') p.x -= d; if (e.key === 'ArrowRight') p.x += d;
+    if (e.key === 'ArrowUp') p.y -= d; if (e.key === 'ArrowDown') p.y += d;
+    save(); draw();
+  } else if ((e.key === '+' || e.key === '=') && S.step !== 'start') {
+    zoomAt(1.5, ...stageCenter());
+  } else if (e.key === '-' && S.step !== 'start') {
+    zoomAt(1 / 1.5, ...stageCenter());
+  } else if (e.key === '0' && S.step !== 'start') {
+    resetZoom(); draw();
+  }
+});
+// Mouse cursor hints.
+stage.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse' || drag) return;
+  const p = toImg(e);
+  let c = 'default';
+  if (S.step === 'straighten' || S.step === 'add') {
+    if (hitHandle(S.step === 'add' ? S.add.quad : S.quad, e) >= 0) c = 'grab';
+  } else if (S.step === 'mark') {
+    if (S.sel >= 0 && hitHandle(S.boxes[S.sel], e) >= 0) c = 'grab';
+    else c = S.boxes.some((q) => pointInQuad(p, q)) ? 'move' : 'crosshair';
+  } else if (S.step === 'arrange' && !S.before) {
+    const sp = S.piece;
+    if (sp && !sp.locked && hitHandle([{ x: sp.x + sp.w, y: sp.y + sp.h }], e) === 0) c = 'nwse-resize';
+    else if (S.pieces.some((x) => !x.hidden && inside(p, x))) c = 'move';
+  }
+  stage.style.cursor = c;
+});
 // iOS: stop the page from rubber-banding / zooming.
 document.addEventListener('touchmove', (e) => { if (e.target === stage) e.preventDefault(); }, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 
 // ---------- steps & toolbar ----------
+const ZOOM_TIP = TOUCH ? ' Pinch to zoom.' : ' Ctrl/⌘ + scroll to zoom.';
 const HINTS = {
   start: '',
-  straighten: 'Optional: if the photo is taken at an angle, drag the 4 dots onto the corners of something that should be a rectangle (a big frame works best). Then tap Straighten — or Skip.',
-  mark: 'Drag a box around each frame. Tap a box to select it, then drag its corners to fit slanted or odd-shaped frames. Dashed boxes are suggestions: adjust or delete them.',
-  arrange: 'Drag pictures to move them. Pictures you add can be resized with the corner dot or a pinch.',
-  add: 'Drag the 4 dots onto the corners of the picture (this also fixes any slant).',
+  straighten: 'Photo taken at an angle? Drag the 4 dots onto the corners of a big frame, then Straighten. Otherwise, Skip.' + ZOOM_TIP,
+  mark: 'Box each frame on the wall; dashed boxes are suggestions. Tap a box, then drag its corners to fit.' + ZOOM_TIP,
+  arrange: 'Drag pictures to move them. Resize added pictures with the corner dot' + (TOUCH ? ' or a pinch.' : '.') + ZOOM_TIP,
+  add: "Drag the 4 dots onto the picture's corners. This also fixes any slant." + ZOOM_TIP,
 };
 
 function go(step) {
   S.step = step;
   S.before = false;
+  resetZoom();
   $('#start').hidden = step !== 'start';
   const order = ['start', 'straighten', 'mark', 'arrange'];
   const cur = order.indexOf(step === 'add' ? 'arrange' : step);
@@ -851,9 +953,10 @@ function updateBar() {
   renderLayers();
   const bar = $('#bar');
   bar.innerHTML = '';
+  requestAnimationFrame(() => { bar.scrollLeft = 0; barOverflow(); });
   const btn = (text, fn, cls = '', disabled = false) => {
     const b = document.createElement('button');
-    b.textContent = text;
+    b.textContent = L(text);
     if (cls) b.className = cls;
     b.disabled = disabled;
     b.onclick = fn;
@@ -863,8 +966,8 @@ function updateBar() {
   const spacer = () => bar.appendChild(Object.assign(document.createElement('span'), { className: 'spacer' }));
 
   if (S.step === 'straighten') {
-    btn('← New photo', () => go('start'));
-    btn('Reset dots', () => { S.quad = defaultQuad(S.raw, 0.2); draw(); });
+    btn('← New photo|←', () => go('start'));
+    btn('Reset dots|↺ Reset', () => { S.quad = defaultQuad(S.raw, 0.2); draw(); });
     spacer();
     btn('Skip', () => { S.photo = S.raw; S.boxes = []; S.sel = -1; go('mark'); analyzeWall(); });
     btn('Straighten ✓', async () => {
@@ -878,29 +981,29 @@ function updateBar() {
       analyzeWall();
     }, 'primary');
   } else if (S.step === 'mark') {
-    btn('← Straighten', () => {
+    btn('← Straighten|←', () => {
       if (S.boxes.length && !confirm('Going back clears your boxes. Continue?')) return;
       go('straighten');
     });
-    if (S.sel >= 0) btn('Delete box', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, 'danger');
-    btn(S.autoFind ? '✨ Auto-find on' : '✨ Auto-find off', () => setAutoFind(!S.autoFind), S.autoFind ? 'on' : '');
-    const rulerLabel = !S.rulerOn ? '📏 Ruler sheet off' : S.sheet ? '📏 Ruler sheet found' : '📏 Ruler sheet: none';
+    if (S.sel >= 0) btn('Delete box|Delete', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, 'danger');
+    btn(S.autoFind ? '✨ Auto-find on|✨ Auto-find' : '✨ Auto-find off|✨ Auto-find', () => setAutoFind(!S.autoFind), S.autoFind ? 'on' : '');
+    const rulerLabel = !S.rulerOn ? '📏 Ruler sheet off|📏 Ruler' : S.sheet ? '📏 Ruler sheet found|📏 Ruler ✓' : '📏 Ruler sheet: none|📏 Ruler';
     btn(rulerLabel, () => setRuler(!S.rulerOn), S.rulerOn ? 'on' : '');
     spacer();
     const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
     const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
     const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
-    btn(what ? `Erase ${what} ${S.ai ? '✨' : '(quick fill)'}` : 'Wall is empty → Next', () => { S.sel = -1; eraseFrames(); }, 'primary');
+    btn(what ? `Erase ${what} ${S.ai ? '✨' : '(quick fill)'}|Erase ${n || ''}${hasSheet ? '+📄' : ''} ✨` : 'Wall is empty → Next|Next →', () => { S.sel = -1; eraseFrames(); }, 'primary');
   } else if (S.step === 'arrange') {
     const p = S.piece;
-    btn('+ Add picture', addPicture, 'primary');
+    btn('+ Add picture|+ Add', addPicture, 'primary');
     btn('Layers', () => { S.layersOpen = !S.layersOpen; localSet('gw.layers', S.layersOpen ? 'open' : 'closed'); updateBar(); resize(); }, S.layersOpen ? 'on' : '');
-    btn(S.snap ? 'Snap on' : 'Snap off', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, S.snap ? 'on' : '');
+    btn(S.snap ? 'Snap on|Snap' : 'Snap off|Snap', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, S.snap ? 'on' : '');
     spacer();
     if (p) {
       // A picture is selected: show its actions in place of the wall-wide ones.
-      if (p.original) btn(p.locked ? '🔒 Size locked' : '🔓 Resizable', () => { p.locked = !p.locked; save(); updateBar(); draw(); });
-      btn('📏 Size', () => setSize(p));
+      if (p.original) btn(p.locked ? '🔒 Size locked|🔒' : '🔓 Resizable|🔓', () => { p.locked = !p.locked; save(); updateBar(); draw(); });
+      btn('📏 Size|📏', () => setSize(p));
       btn('Forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); updateBar(); draw(); });
       btn('Hide', () => setHidden(p, true));
       btn('Remove', () => {
@@ -910,13 +1013,13 @@ function updateBar() {
       btn('Done', () => { S.piece = null; updateBar(); draw(); });
     } else {
       btn(S.before ? 'Showing original' : 'Compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, S.before ? 'on' : '');
-      if (S.boxes.length) btn('↻ Redo wall', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
-      btn('Save image', exportImage);
-      btn('Start over', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
+      if (S.boxes.length) btn('↻ Redo wall|↻ Wall', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
+      btn('Save image|Save', exportImage);
+      btn('Start over|New wall', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
     }
   } else if (S.step === 'add') {
     btn('Cancel', () => { S.add = null; go('arrange'); });
-    btn('Reset dots', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
+    btn('Reset dots|↺ Reset', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
     spacer();
     const size = document.createElement('label');
     size.className = 'size';
@@ -927,7 +1030,7 @@ function updateBar() {
       size.classList.add('muted');
     }
     bar.appendChild(size);
-    btn('Add to wall ✓', placeNewPiece, 'primary');
+    btn('Add to wall ✓|Add ✓', placeNewPiece, 'primary');
   }
 }
 
@@ -1072,6 +1175,16 @@ function renderLayers() {
   }
 }
 
+// Fade the toolbar's right edge when more buttons are hidden off-screen (phones).
+function barOverflow() {
+  const bar = $('#bar');
+  const last = bar.lastElementChild;
+  const more = bar.scrollWidth - bar.clientWidth - bar.scrollLeft > 4 && !last?.classList.contains('primary');
+  bar.classList.toggle('more', more);
+}
+$('#bar').addEventListener('scroll', barOverflow, { passive: true });
+window.addEventListener('resize', barOverflow);
+
 // ---------- actions ----------
 async function startWithSource(getCanvas) {
   busy('Opening photo…');
@@ -1194,6 +1307,7 @@ $('#pickWall').onclick = async () => {
 $('#sampleWall').onclick = () => startWithSource(() => imageToCanvas('sample-wall.jpg', MAX_WALL));
 $('#resume').onclick = resume;
 window.addEventListener('resize', resize);
+$('#hint').addEventListener('click', () => { $('#hint').classList.toggle('open'); resize(); });
 
 (async function init() {
   try {

@@ -41,6 +41,8 @@ The free plan sleeps after about 15 minutes of no use, so the first visit after 
    - **📏 Size**: no ruler sheet? Select an original frame and type its real width in inches to set the scale instead. Either way, every frame then shows its size in inches.
    - **↻ Redo wall** regenerates the empty wall if you don't like the result; your arrangement stays put. **Compare** toggles back to the original photo. **Save image** exports the result (iPad share sheet → Save Image).
 
+Works on phones (portrait or landscape), iPad and desktop. Zoom in to place corners precisely: pinch on touch screens; on desktop, Ctrl/⌘ + scroll or a trackpad pinch, scroll to pan, or the − / Fit / + buttons. Desktop keys: Esc deselects, Delete removes the selected box or hides the selected picture, arrow keys nudge (Shift for bigger steps), + / − / 0 zoom.
+
 Your work autosaves in the browser, so a Safari reload won't lose it (*Continue my last wall*).
 
 ## Config (`.env`)

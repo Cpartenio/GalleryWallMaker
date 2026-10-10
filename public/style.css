@@ -13,12 +13,16 @@ html, body {
   font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
-body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 
 #top { padding: 10px 16px 6px; border-bottom: 1px solid var(--line); }
 #steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: s; flex-wrap: wrap; }
 #steps li { counter-increment: s; font-size: 14px; color: var(--muted); padding: 4px 10px; border-radius: 99px; }
-#steps li::before { content: counter(s) "  "; font-weight: 600; }
+#steps li::before { font-weight: 600; }
+#steps li:nth-child(1)::before { content: "1  "; }
+#steps li:nth-child(2)::before { content: "2  "; }
+#steps li:nth-child(3)::before { content: "3  "; }
+#steps li:nth-child(4)::before { content: "4  "; }
 #steps li.on { background: var(--ink); color: var(--bg); }
 #steps li.done { color: var(--ink); }
 #hint { margin: 6px 2px 0; min-height: 1.4em; font-size: 16px; }
@@ -27,9 +31,12 @@ body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 
 #stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 
 .panel {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 14px; padding: 24px 16px; text-align: center; background: var(--bg);
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  gap: 14px; padding: 24px 16px; text-align: center; background: var(--bg); overflow-y: auto;
 }
+/* Centred when there's room, scrollable when there isn't. */
+.panel > :first-child { margin-top: auto; }
+.panel > :last-child { margin-bottom: auto; }
 .panel[hidden] { display: none; }
 .panel h1 { font-size: 34px; margin: 0; letter-spacing: -0.5px; }
 .panel p { max-width: 460px; color: var(--muted); margin: 0 0 10px; }
@@ -57,6 +64,7 @@ button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); 
 }
 #bar:empty { display: none; }
 #bar .spacer { flex: 1; }
+#bar .primary { position: sticky; right: 0; box-shadow: -10px 0 12px -4px var(--bg); }
 #bar .size { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
 #bar .size.muted { color: var(--muted); font-weight: 400; font-size: 15px; white-space: normal; max-width: 260px; }
 #bar .size input {
@@ -102,3 +110,53 @@ button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); 
   max-width: min(560px, calc(100% - 32px)); text-align: center;
 }
 #toast[hidden] { display: none; }
+
+#zoom { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: 2; }
+#zoom[hidden] { display: none; }
+#zoom button { min-height: 40px; min-width: 40px; padding: 0 12px; font-size: 18px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+/* Touch screens zoom with a pinch; only offer the way back. */
+@media (pointer: coarse) {
+  #zoom [data-z="in"], #zoom [data-z="out"] { display: none; }
+  #zoom:not(.zoomed) { display: none; }
+}
+
+/* Phones (and small windows): give the photo as much room as possible. */
+@media (max-width: 700px), (max-height: 560px) {
+  body { font-size: 15px; }
+  #top { padding: 6px 10px 4px; }
+  #steps { flex-wrap: nowrap; gap: 2px; overflow-x: auto; }
+  #steps li { font-size: 12px; padding: 3px 8px; white-space: nowrap; }
+  #hint {
+    font-size: 13px; margin-top: 4px; min-height: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  #hint.open { display: block; }
+  #bar { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; padding: 8px 10px; }
+  #bar .spacer { flex: 0 0 0; }
+  button { min-height: 44px; padding: 0 12px; font-size: 15px; border-radius: 10px; }
+  #bar .size input { min-height: 44px; width: 52px; }
+  #bar .size.muted { font-size: 13px; max-width: 200px; }
+  #layers { padding: 6px 10px; gap: 8px; }
+  #layers .layer { width: 84px; }
+  #layers .pick { font-size: 11px; }
+  #layers .pick img { height: 44px; max-width: 72px; }
+  #layers .eye { min-height: 34px; }
+  .panel { gap: 10px; padding: 16px 14px; }
+  .panel h1 { font-size: 26px; }
+  .big { min-height: 52px; font-size: 17px; }
+  .panel a.big { min-height: 52px; font-size: 17px; }
+  #toast { bottom: calc(76px + env(safe-area-inset-bottom)); font-size: 14px; }
+}
+#bar.more { -webkit-mask-image: linear-gradient(to right, #000 80%, transparent); mask-image: linear-gradient(to right, #000 80%, transparent); }
+/* Landscape phones: current step and a one-line tip share a row; slimmer layer strip. */
+@media (max-height: 560px) {
+  #top { display: flex; align-items: center; gap: 8px; }
+  #steps { flex: none; }
+  #steps li:not(.on) { display: none; }
+  #hint { -webkit-line-clamp: 1; margin: 0; flex: 1; }
+  #layers .layer { width: 70px; }
+  #layers .pick { padding: 3px 3px 1px; }
+  #layers .pick span { display: none; }
+  #layers .pick img { height: 34px; max-width: 60px; }
+  #layers .eye { min-height: 30px; }
+}
