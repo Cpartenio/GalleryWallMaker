@@ -120,43 +120,96 @@ button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); 
   #zoom:not(.zoomed) { display: none; }
 }
 
-/* Phones (and small windows): give the photo as much room as possible. */
-@media (max-width: 700px), (max-height: 560px) {
-  body { font-size: 15px; }
-  #top { padding: 6px 10px 4px; }
-  #steps { flex-wrap: nowrap; gap: 2px; overflow-x: auto; }
-  #steps li { font-size: 12px; padding: 3px 8px; white-space: nowrap; }
-  #hint {
-    font-size: 13px; margin-top: 4px; min-height: 0;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  #hint.open { display: block; }
-  #bar { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; padding: 8px 10px; }
-  #bar .spacer { flex: 0 0 0; }
-  button { min-height: 44px; padding: 0 12px; font-size: 15px; border-radius: 10px; }
-  #bar .size input { min-height: 44px; width: 52px; }
-  #bar .size.muted { font-size: 13px; max-width: 200px; }
-  #layers { padding: 6px 10px; gap: 8px; }
-  #layers .layer { width: 84px; }
-  #layers .pick { font-size: 11px; }
-  #layers .pick img { height: 44px; max-width: 72px; }
-  #layers .eye { min-height: 34px; }
-  .panel { gap: 10px; padding: 16px 14px; }
-  .panel h1 { font-size: 26px; }
-  .big { min-height: 52px; font-size: 17px; }
-  .panel a.big { min-height: 52px; font-size: 17px; }
-  #toast { bottom: calc(76px + env(safe-area-inset-bottom)); font-size: 14px; }
+/* Buttons carry an icon + label. */
+button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+button svg { flex: none; }
+#mbar, #sizeChip { display: none; }
+
+/* ---------- Phones (and small windows), laid out like mobile photo editors ----------
+   Top bar: back · step title · tips · main action. Tools: icon tiles along the bottom
+   (portrait) or down the right side (landscape). The photo gets everything else. */
+body.compact { font-size: 15px; }
+body.compact #steps, body.compact #hint { display: none; }
+body.compact #top { padding: 0; border-bottom: 1px solid var(--line); }
+body.compact #mbar { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 8px; }
+body.compact #mTitle { flex: 1; min-width: 0; font-weight: 700; font-size: 16px; line-height: 1.15; padding-left: 4px; }
+body.compact #mTitle small { display: block; font-weight: 500; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.compact #mBack:empty { display: none; }
+.iconbtn { min-height: 40px; min-width: 40px; padding: 0; border: 0; background: none; border-radius: 10px; font-size: 18px; font-weight: 700; }
+#mHelp { color: var(--muted); border: 1.5px solid var(--line); min-height: 32px; min-width: 32px; border-radius: 50%; font-size: 15px; }
+body.tip #mHelp { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+#mAction button { min-height: 38px; padding: 0 14px; border-radius: 99px; font-size: 15px; }
+#mAction button svg { width: 18px; height: 18px; }
+
+/* Tips pop over the top of the photo. */
+body.compact.tip #hint {
+  display: block; position: fixed; z-index: 5; left: 10px; right: 10px; top: calc(60px + env(safe-area-inset-top));
+  margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--ink); color: var(--bg); font-size: 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
 }
-#bar.more { -webkit-mask-image: linear-gradient(to right, #000 80%, transparent); mask-image: linear-gradient(to right, #000 80%, transparent); }
-/* Landscape phones: current step and a one-line tip share a row; slimmer layer strip. */
-@media (max-height: 560px) {
-  #top { display: flex; align-items: center; gap: 8px; }
-  #steps { flex: none; }
-  #steps li:not(.on) { display: none; }
-  #hint { -webkit-line-clamp: 1; margin: 0; flex: 1; }
-  #layers .layer { width: 70px; }
-  #layers .pick { padding: 3px 3px 1px; }
-  #layers .pick span { display: none; }
-  #layers .pick img { height: 34px; max-width: 60px; }
-  #layers .eye { min-height: 30px; }
+
+/* Tool tiles. */
+body.compact #bar {
+  flex-wrap: nowrap; justify-content: flex-start; gap: 2px; padding: 4px 6px; overflow-x: auto;
+}
+body.compact #bar:empty { display: none; }
+.tile {
+  flex: none; flex-direction: column; gap: 3px; min-width: 64px; min-height: 58px; padding: 6px 4px;
+  border: 0; background: none; border-radius: 12px; font-size: 11px; font-weight: 600; color: var(--ink);
+}
+.tile.on { background: #e6ecfb; color: var(--accent); }
+.tile.danger { color: var(--danger); }
+#bar.more { -webkit-mask-image: linear-gradient(to right, #000 82%, transparent); mask-image: linear-gradient(to right, #000 82%, transparent); }
+
+/* Size inputs float over the photo. */
+body.compact #sizeChip:not([hidden]) {
+  display: flex; position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 3;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+  max-width: calc(100% - 20px);
+}
+#sizeChip .size { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; font-size: 14px; }
+#sizeChip .size.muted { white-space: normal; font-weight: 400; color: var(--muted); font-size: 13px; text-align: center; }
+#sizeChip input { width: 52px; min-height: 38px; font: inherit; text-align: center; border: 1px solid var(--line); border-radius: 10px; -webkit-user-select: text; user-select: text; }
+
+body.compact #layers { padding: 6px 8px; gap: 6px; }
+body.compact #layers .layer { width: 76px; }
+body.compact #layers .pick { font-size: 11px; }
+body.compact #layers .pick img { height: 42px; max-width: 66px; }
+body.compact #layers .eye { min-height: 32px; }
+body.compact .panel { gap: 10px; padding: 16px 14px; }
+body.compact .panel h1 { font-size: 26px; }
+body.compact .big, body.compact .panel a.big { min-height: 52px; font-size: 17px; }
+body.compact #toast { bottom: calc(84px + env(safe-area-inset-bottom)); font-size: 14px; }
+
+/* Landscape phones: tools move to a rail on the right, layers to a column beside it. */
+@media (orientation: landscape) and (max-height: 560px) {
+  body.compact {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "top layers bar" "main layers bar";
+  }
+  body.compact #top { grid-area: top; }
+  body.compact #main { grid-area: main; }
+  body.compact #layers { grid-area: layers; flex-direction: column; overflow-x: hidden; overflow-y: auto; border-top: 0; border-left: 1px solid var(--line); }
+  body.compact #layers .layer { width: 64px; }
+  body.compact #layers .pick span { display: none; }
+  body.compact #layers .pick img { height: 34px; max-width: 54px; }
+  body.compact #layers .eye { min-height: 28px; }
+  body.compact #layers .showall { white-space: normal; font-size: 11px; padding: 4px; min-height: 0; }
+  body.compact #bar {
+    grid-area: bar; flex-direction: column; overflow-x: hidden; overflow-y: auto; border-top: 0;
+    border-left: 1px solid var(--line); padding: 6px 4px; justify-content: flex-start;
+  }
+  body.compact #bar.more { -webkit-mask-image: none; mask-image: none; }
+  body.compact #bar.more-y { -webkit-mask-image: linear-gradient(#000 85%, transparent); mask-image: linear-gradient(#000 85%, transparent); }
+  body.compact .tile { min-width: 62px; min-height: 52px; }
+  body.compact #mbar { height: 44px; }
+  body.compact.tip #hint { top: calc(50px + env(safe-area-inset-top)); right: 90px; }
+  body.compact #toast { bottom: 12px; }
+}
+/* Centre the tiles when they fit; scroll from the start when they don't. */
+body.compact #bar > :first-child { margin-left: auto; }
+body.compact #bar > :last-child { margin-right: auto; }
+@media (orientation: landscape) and (max-height: 560px) {
+  body.compact #bar > :first-child { margin-left: 0; margin-top: 0; }
+  body.compact #bar > :last-child { margin-right: 0; }
 }

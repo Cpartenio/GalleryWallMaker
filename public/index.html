@@ -12,6 +12,12 @@
 </head>
 <body>
   <header id="top">
+    <div id="mbar">
+      <span id="mBack"></span>
+      <div id="mTitle"></div>
+      <button id="mHelp" class="iconbtn" aria-label="Tips">?</button>
+      <span id="mAction"></span>
+    </div>
     <ol id="steps">
       <li data-step="start">Photo</li>
       <li data-step="straighten">Straighten</li>
@@ -23,6 +29,7 @@
 
   <main id="main">
     <canvas id="stage"></canvas>
+    <div id="sizeChip" hidden></div>
     <div id="zoom" hidden>
       <button data-z="out" aria-label="Zoom out">−</button>
       <button data-z="fit">Fit</button>

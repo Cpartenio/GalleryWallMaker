@@ -44,9 +44,7 @@ let view = { s: 1, ox: 0, oy: 0 };
 let zoom = { k: 1, x: 0, y: 0 };
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const COMPACT = matchMedia('(max-width: 700px), (max-height: 560px)');
-// Short button labels on phones: "Long label|Short".
-const L = (text) => { const [long, short] = text.split('|'); return COMPACT.matches && short ? short : long; };
-COMPACT.addEventListener?.('change', () => updateBar());
+COMPACT.addEventListener?.('change', () => { updateBar(); resize(); });
 let drag = null;
 let loupe = null;
 let nextId = 1;
@@ -946,92 +944,166 @@ function go(step) {
   });
   updateBar();
   resize();
+  showTip(COMPACT.matches && step !== 'start');
+}
+
+// Simple line icons (24×24, stroked).
+const ICONS = {
+  back: 'M15 18l-6-6 6-6',
+  reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+  skip: 'M5 5l9 7-9 7zM18 5v14',
+  check: 'M20 6L9 17l-5-5',
+  next: 'M5 12h14M13 6l6 6-6 6',
+  sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z',
+  ruler: 'M3 17L17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2',
+  trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14',
+  plus: 'M12 5v14M5 12h14',
+  layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  magnet: 'M6 3v8a6 6 0 0 0 12 0V3M6 7h4M14 7h4',
+  lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+  unlock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2',
+  forward: 'M9 9h11v11H9zM4 15V4h11',
+  eyeOff: 'M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2',
+  compare: 'M12 3v18M4 5h16v14H4z',
+  redo: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
+  save: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  newWall: 'M4 4h16v16H4zM9 12h6M12 9v6',
+  close: 'M6 6l12 12M18 6L6 18',
+  wand: 'M4 20L15 9M14 3l.9 2.1L17 6l-2.1.9L14 9l-.9-2.1L11 6l2.1-.9z',
+};
+const icon = (name) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
+
+const STEP_TITLES = { straighten: 'Straighten', mark: 'Mark frames', arrange: 'Arrange', add: 'Add picture' };
+const STEP_NUM = { straighten: 2, mark: 3, arrange: 4, add: 4 };
+
+// Each screen lists its actions once; the layout decides where they go:
+// wide screens get a bottom bar of labelled buttons, phones get Back + the main action in a top bar
+// and icon tiles along the bottom (portrait) or down the side (landscape), like mobile photo editors.
+function toolbarItems() {
+  const items = [];
+  const add = (label, short, iconName, fn, opts = {}) => items.push({ label, short, icon: iconName, fn, ...opts });
+  if (S.step === 'straighten') {
+    add('New photo', 'Back', 'back', () => go('start'), { kind: 'back' });
+    add('Reset dots', 'Reset', 'reset', () => { S.quad = defaultQuad(S.raw, 0.2); draw(); });
+    add('Skip', 'Skip', 'skip', () => { S.photo = S.raw; S.boxes = []; S.sel = -1; go('mark'); analyzeWall(); });
+    add('Straighten', 'Straighten', 'check', async () => {
+      busy('Straightening…');
+      await nextFrame();
+      const out = straightenPhoto(S.raw, S.quad);
+      busy('');
+      if (!out) return toast('That shape is too extreme to straighten. Try placing the dots again.');
+      S.photo = out; S.boxes = []; S.sel = -1;
+      go('mark');
+      analyzeWall();
+    }, { kind: 'primary' });
+  } else if (S.step === 'mark') {
+    add('Straighten', 'Back', 'back', () => {
+      if (S.boxes.length && !confirm('Going back clears your boxes. Continue?')) return;
+      go('straighten');
+    }, { kind: 'back' });
+    add('Auto-find', 'Auto-find', 'sparkle', () => setAutoFind(!S.autoFind), { on: S.autoFind });
+    add(!S.rulerOn ? 'Ruler sheet' : S.sheet ? 'Ruler sheet found' : 'Ruler sheet: none', S.sheet && S.rulerOn ? 'Ruler ✓' : 'Ruler',
+      'ruler', () => setRuler(!S.rulerOn), { on: S.rulerOn });
+    if (S.sel >= 0) add('Delete box', 'Delete', 'trash', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, { danger: true });
+    const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
+    const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
+    const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
+    add(what ? `Erase ${what}${S.ai ? '' : ' (quick fill)'}` : 'Wall is empty: Next', what ? 'Erase' : 'Next',
+      what ? 'wand' : 'next', () => { S.sel = -1; eraseFrames(); }, { kind: 'primary' });
+  } else if (S.step === 'arrange') {
+    const p = S.piece;
+    if (p) {
+      // A picture is selected: its own actions replace the wall-wide ones.
+      add('Done', 'Done', 'check', () => { S.piece = null; updateBar(); draw(); }, { kind: 'primary' });
+      if (p.original) add(p.locked ? 'Size locked' : 'Resizable', p.locked ? 'Locked' : 'Unlocked', p.locked ? 'lock' : 'unlock',
+        () => { p.locked = !p.locked; save(); updateBar(); draw(); }, { on: !p.locked });
+      add('Size', 'Size', 'ruler', () => setSize(p));
+      add('Forward', 'Forward', 'forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); updateBar(); draw(); });
+      add('Hide', 'Hide', 'eyeOff', () => setHidden(p, true));
+      add('Remove', 'Remove', 'trash', () => {
+        if (!confirm(`Remove ${p.name || 'this picture'} from the wall? (Hide keeps it in Layers.)`)) return;
+        S.pieces = S.pieces.filter((x) => x !== p); S.piece = null; save(); updateBar(); draw();
+      }, { danger: true });
+    } else {
+      add('Add picture', 'Add', 'plus', addPicture, { kind: 'primary' });
+      add('Layers', 'Layers', 'layers', () => { S.layersOpen = !S.layersOpen; localSet('gw.layers', S.layersOpen ? 'open' : 'closed'); updateBar(); resize(); }, { on: S.layersOpen });
+      add('Snap', 'Snap', 'magnet', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, { on: S.snap });
+      add(S.before ? 'Showing original' : 'Compare', 'Compare', 'compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, { on: S.before });
+      if (S.boxes.length) add('Redo wall', 'Redo wall', 'redo', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
+      add('Save image', 'Save', 'save', exportImage);
+      add('Start over', 'New wall', 'newWall', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } }, { kind: 'menu' });
+    }
+  } else if (S.step === 'add') {
+    add('Cancel', 'Cancel', 'close', () => { S.add = null; go('arrange'); }, { kind: 'back' });
+    add('Reset dots', 'Reset', 'reset', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
+    add('Add to wall', 'Add', 'check', placeNewPiece, { kind: 'primary' });
+  }
+  return items;
 }
 
 function updateBar() {
   $('#hint').textContent = HINTS[S.step] || '';
   renderLayers();
-  const bar = $('#bar');
-  bar.innerHTML = '';
-  requestAnimationFrame(() => { bar.scrollLeft = 0; barOverflow(); });
-  const btn = (text, fn, cls = '', disabled = false) => {
+  const compact = COMPACT.matches;
+  document.body.classList.toggle('compact', compact);
+  const bar = $('#bar'), mBack = $('#mBack'), mAction = $('#mAction');
+  bar.innerHTML = ''; mBack.innerHTML = ''; mAction.innerHTML = '';
+  $('#mTitle').innerHTML = STEP_TITLES[S.step]
+    ? `${STEP_TITLES[S.step]}<small>${S.step === 'arrange' && S.piece ? S.piece.name || 'Picture' : `Step ${STEP_NUM[S.step]} of 4`}</small>` : '';
+  const make = (it, style) => {
     const b = document.createElement('button');
-    b.textContent = L(text);
-    if (cls) b.className = cls;
-    b.disabled = disabled;
-    b.onclick = fn;
-    bar.appendChild(b);
+    b.onclick = it.fn;
+    b.title = it.label;
+    if (style === 'tile') {
+      b.className = 'tile' + (it.on ? ' on' : '') + (it.danger ? ' danger' : '');
+      b.innerHTML = `${icon(it.icon)}<span></span>`;
+      b.querySelector('span').textContent = it.short;
+    } else if (style === 'back') {
+      b.className = 'iconbtn';
+      b.innerHTML = icon(it.icon);
+      b.setAttribute('aria-label', it.label);
+    } else {
+      b.className = [it.kind === 'primary' ? 'primary' : '', it.on ? 'on' : '', it.danger ? 'danger' : ''].join(' ').trim();
+      b.innerHTML = `${icon(it.icon)}<span></span>`;
+      b.querySelector('span').textContent = compact ? it.short : it.label;
+    }
     return b;
   };
-  const spacer = () => bar.appendChild(Object.assign(document.createElement('span'), { className: 'spacer' }));
-
-  if (S.step === 'straighten') {
-    btn('← New photo|←', () => go('start'));
-    btn('Reset dots|↺ Reset', () => { S.quad = defaultQuad(S.raw, 0.2); draw(); });
-    spacer();
-    btn('Skip', () => { S.photo = S.raw; S.boxes = []; S.sel = -1; go('mark'); analyzeWall(); });
-    btn('Straighten ✓', async () => {
-      busy('Straightening…');
-      await nextFrame();
-      const out = straightenPhoto(S.raw, S.quad);
-      busy('');
-      if (!out) return toast('That shape is too extreme to straighten — try placing the dots again.');
-      S.photo = out; S.boxes = []; S.sel = -1;
-      go('mark');
-      analyzeWall();
-    }, 'primary');
-  } else if (S.step === 'mark') {
-    btn('← Straighten|←', () => {
-      if (S.boxes.length && !confirm('Going back clears your boxes. Continue?')) return;
-      go('straighten');
-    });
-    if (S.sel >= 0) btn('Delete box|Delete', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, 'danger');
-    btn(S.autoFind ? '✨ Auto-find on|✨ Auto-find' : '✨ Auto-find off|✨ Auto-find', () => setAutoFind(!S.autoFind), S.autoFind ? 'on' : '');
-    const rulerLabel = !S.rulerOn ? '📏 Ruler sheet off|📏 Ruler' : S.sheet ? '📏 Ruler sheet found|📏 Ruler ✓' : '📏 Ruler sheet: none|📏 Ruler';
-    btn(rulerLabel, () => setRuler(!S.rulerOn), S.rulerOn ? 'on' : '');
-    spacer();
-    const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
-    const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
-    const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
-    btn(what ? `Erase ${what} ${S.ai ? '✨' : '(quick fill)'}|Erase ${n || ''}${hasSheet ? '+📄' : ''} ✨` : 'Wall is empty → Next|Next →', () => { S.sel = -1; eraseFrames(); }, 'primary');
-  } else if (S.step === 'arrange') {
-    const p = S.piece;
-    btn('+ Add picture|+ Add', addPicture, 'primary');
-    btn('Layers', () => { S.layersOpen = !S.layersOpen; localSet('gw.layers', S.layersOpen ? 'open' : 'closed'); updateBar(); resize(); }, S.layersOpen ? 'on' : '');
-    btn(S.snap ? 'Snap on|Snap' : 'Snap off|Snap', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, S.snap ? 'on' : '');
-    spacer();
-    if (p) {
-      // A picture is selected: show its actions in place of the wall-wide ones.
-      if (p.original) btn(p.locked ? '🔒 Size locked|🔒' : '🔓 Resizable|🔓', () => { p.locked = !p.locked; save(); updateBar(); draw(); });
-      btn('📏 Size|📏', () => setSize(p));
-      btn('Forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); updateBar(); draw(); });
-      btn('Hide', () => setHidden(p, true));
-      btn('Remove', () => {
-        if (!confirm(`Remove ${p.name || 'this picture'} from the wall? (Hide keeps it in Layers.)`)) return;
-        S.pieces = S.pieces.filter((x) => x !== p); S.piece = null; save(); updateBar(); draw();
-      }, 'danger');
-      btn('Done', () => { S.piece = null; updateBar(); draw(); });
-    } else {
-      btn(S.before ? 'Showing original' : 'Compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, S.before ? 'on' : '');
-      if (S.boxes.length) btn('↻ Redo wall|↻ Wall', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
-      btn('Save image|Save', exportImage);
-      btn('Start over|New wall', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } });
+  const items = toolbarItems();
+  if (compact) {
+    for (const it of items) {
+      if (it.kind === 'back') mBack.appendChild(make(it, 'back'));
+      else if (it.kind === 'primary') mAction.appendChild(make(it, 'pill'));
+      else bar.appendChild(make(it, 'tile'));
     }
-  } else if (S.step === 'add') {
-    btn('Cancel', () => { S.add = null; go('arrange'); });
-    btn('Reset dots|↺ Reset', () => { S.add.quad = defaultQuad(S.add.img, 0.08); draw(); });
+  } else {
+    const spacer = () => bar.appendChild(Object.assign(document.createElement('span'), { className: 'spacer' }));
+    const back = items.filter((i) => i.kind === 'back'), primary = items.filter((i) => i.kind === 'primary');
+    const rest = items.filter((i) => i.kind !== 'back' && i.kind !== 'primary');
+    back.forEach((i) => bar.appendChild(make(i, 'button')));
+    // Arrange keeps its main action first; elsewhere it sits at the far right.
+    if (S.step === 'arrange') primary.forEach((i) => bar.appendChild(make(i, 'button')));
+    rest.filter((i) => i.kind !== 'menu').forEach((i) => bar.appendChild(make(i, 'button')));
     spacer();
+    rest.filter((i) => i.kind === 'menu').forEach((i) => bar.appendChild(make(i, 'button')));
+    if (S.step !== 'arrange') primary.forEach((i) => bar.appendChild(make(i, 'button')));
+  }
+  // Real-size inputs for a new picture float over the photo on phones, sit in the bar otherwise.
+  const chip = $('#sizeChip');
+  chip.innerHTML = '';
+  chip.hidden = true;
+  if (S.step === 'add') {
     const size = document.createElement('label');
     size.className = 'size';
     if (S.pxPerInch) {
-      size.innerHTML = 'Real size <input id="addW" inputmode="decimal" placeholder="W"> × <input id="addH" inputmode="decimal" placeholder="H"> in';
+      size.innerHTML = '<span>Real size</span> <input id="addW" inputmode="decimal" placeholder="W"> × <input id="addH" inputmode="decimal" placeholder="H"> in';
     } else {
-      size.textContent = 'For real sizes, use the ruler sheet or 📏 Size on a frame';
+      size.textContent = 'For real sizes, use the ruler sheet or Size on a frame';
       size.classList.add('muted');
     }
-    bar.appendChild(size);
-    btn('Add to wall ✓|Add ✓', placeNewPiece, 'primary');
+    if (compact) { chip.appendChild(size); chip.hidden = false; } else bar.insertBefore(size, bar.querySelector('.primary'));
   }
+  requestAnimationFrame(() => { bar.scrollLeft = 0; bar.scrollTop = 0; barOverflow(); });
 }
 
 // ---------- auto-find & ruler sheet ----------
@@ -1180,6 +1252,7 @@ function barOverflow() {
   const bar = $('#bar');
   const last = bar.lastElementChild;
   const more = bar.scrollWidth - bar.clientWidth - bar.scrollLeft > 4 && !last?.classList.contains('primary');
+  bar.classList.toggle('more-y', bar.scrollHeight - bar.clientHeight - bar.scrollTop > 4);
   bar.classList.toggle('more', more);
 }
 $('#bar').addEventListener('scroll', barOverflow, { passive: true });
@@ -1307,7 +1380,16 @@ $('#pickWall').onclick = async () => {
 $('#sampleWall').onclick = () => startWithSource(() => imageToCanvas('sample-wall.jpg', MAX_WALL));
 $('#resume').onclick = resume;
 window.addEventListener('resize', resize);
-$('#hint').addEventListener('click', () => { $('#hint').classList.toggle('open'); resize(); });
+$('#hint').addEventListener('click', () => { $('#hint').classList.toggle('open'); if (!COMPACT.matches) resize(); });
+// Phones: tips live behind the ? button and pop up briefly when a step opens.
+let tipTimer;
+function showTip(on) {
+  clearTimeout(tipTimer);
+  document.body.classList.toggle('tip', on);
+  if (on) tipTimer = setTimeout(() => document.body.classList.remove('tip'), 6000);
+}
+$('#mHelp').onclick = () => showTip(!document.body.classList.contains('tip'));
+stage.addEventListener('pointerdown', () => showTip(false), true);
 
 (async function init() {
   try {
