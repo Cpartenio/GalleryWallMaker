@@ -37,6 +37,7 @@ const S = {
   rulerOn: localGet('gw.ruler') !== 'off',      // look for the printed ruler sheet to get real sizes
   sheet: undefined,                             // ruler sheet result: object, null (not found) or undefined (not looked)
   scaleSource: null,                            // 'sheet' | 'manual'
+  fillMode: localGet('gw.fill') === 'openai' ? 'openai' : 'device', // OpenAI only if the server has a key
 };
 
 let view = { s: 1, ox: 0, oy: 0 };
@@ -279,7 +280,7 @@ async function aiFill(photo, quads, pad) {
   return full;
 }
 // Paste generated pixels into each outline (grown by pad) only, colour-matched and feathered.
-function blendQuads(out, gen, quads, pad, feather) {
+function blendQuads(out, gen, quads, pad, feather, matchColor = true) {
   const W = out.width, H = out.height;
   const og = out.getContext('2d');
   const od = og.getImageData(0, 0, W, H);
@@ -301,7 +302,7 @@ function blendQuads(out, gen, quads, pad, feather) {
         n++;
       }
     }
-    const delta = n ? [0, 1, 2].map((c) => (mo[c] - mg[c]) / n) : [0, 0, 0];
+    const delta = n && matchColor ? [0, 1, 2].map((c) => (mo[c] - mg[c]) / n) : [0, 0, 0];
     for (let y = bb.y; y < bb.y + bb.h; y++) {
       for (let x = bb.x; x < bb.x + bb.w; x++) {
         const a = clamp((quadDist(q, x + 0.5, y + 0.5) + pad) / Math.max(1, feather), 0, 1);
@@ -363,23 +364,24 @@ function quickFill(out, regions) {
 // lighting and paint run continuously with no patch edges. Without AI, patches are filled locally.
 async function makeCleanWall(quads) {
   const photo = S.photo, W = photo.width, H = photo.height;
-  const pad = Math.round(Math.max(W, H) * 0.012);
   if (!quads.length) return copyCanvas(photo);
-  if (S.ai) {
-    busy('Regenerating an empty wall with AI…\nthis can take up to a minute');
+  if (S.ai && S.fillMode === 'openai') {
+    busy('Regenerating an empty wall with OpenAI…\nthis can take up to a minute');
     try {
-      return await aiFill(photo, quads, pad);
+      return await aiFill(photo, quads, Math.round(Math.max(W, H) * 0.012));
     } catch (e) {
       console.error(e);
-      toast(`AI erase failed (${e.message}). Used quick fill instead.`, 6000);
+      toast(`OpenAI erase failed (${e.message}). Used the on-device fill instead.`, 6000);
     }
   }
-  busy('Filling in the wall…');
+  // Free, on-device: the inpainting model runs in this browser; nothing is uploaded.
+  busy('Erasing frames on your device…');
   await nextFrame();
-  const out = copyCanvas(photo), gen = copyCanvas(photo);
-  quickFill(gen, quads.map((q) => quadBounds(q, pad * 2, W, H)));
-  blendQuads(out, gen, quads, pad, Math.round(pad * 0.8));
-  return out;
+  const { canvas, usedModel } = await onDeviceFill(photo, quads, Math.round(Math.max(W, H) * 0.02), (f) => {
+    busy(`Downloading the eraser (first time only)… ${Math.round(f * 100)}%`);
+  });
+  if (!usedModel) toast("The AI eraser couldn't load on this device, so a simpler smooth fill was used.", 6000);
+  return canvas;
 }
 
 async function redoWall() {
@@ -403,7 +405,6 @@ async function eraseFrames() {
   }).filter((p) => p.img);
   S.piece = null;
   busy('');
-  if (!S.ai && quads.length) toast('Quick fill used (no AI key). Add openAIAPIKey to .env for a cleaner wall.', 5000);
   go('arrange');
   save();
 }
@@ -1004,11 +1005,17 @@ function toolbarItems() {
     add('Auto-find', 'Auto-find', 'sparkle', () => setAutoFind(!S.autoFind), { on: S.autoFind });
     add(!S.rulerOn ? 'Ruler sheet' : S.sheet ? 'Ruler sheet found' : 'Ruler sheet: none', S.sheet && S.rulerOn ? 'Ruler ✓' : 'Ruler',
       'ruler', () => setRuler(!S.rulerOn), { on: S.rulerOn });
+    if (S.ai) add(S.fillMode === 'openai' ? 'Eraser: OpenAI' : 'Eraser: on-device', S.fillMode === 'openai' ? 'OpenAI' : 'On-device', 'wand', () => {
+      S.fillMode = S.fillMode === 'openai' ? 'device' : 'openai';
+      localSet('gw.fill', S.fillMode);
+      updateBar();
+      toast(S.fillMode === 'openai' ? 'Erasing with OpenAI (uses your API key).' : 'Erasing on this device (free, private).');
+    }, { on: S.fillMode === 'openai' });
     if (S.sel >= 0) add('Delete box', 'Delete', 'trash', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, { danger: true });
     const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
     const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
     const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
-    add(what ? `Erase ${what}${S.ai ? '' : ' (quick fill)'}` : 'Wall is empty: Next', what ? 'Erase' : 'Next',
+    add(what ? `Erase ${what}` : 'Wall is empty: Next', what ? 'Erase' : 'Next',
       what ? 'wand' : 'next', () => { S.sel = -1; eraseFrames(); }, { kind: 'primary' });
   } else if (S.step === 'arrange') {
     const p = S.piece;
@@ -1396,9 +1403,9 @@ stage.addEventListener('pointerdown', () => showTip(false), true);
     const r = await fetch('api/status');
     S.ai = !!(await r.json()).ai;
   } catch { S.ai = false; }
-  $('#aiStatus').textContent = S.ai
-    ? 'AI frame erasing is on.'
-    : 'AI erasing is off (no OpenAI key on the server) — a simple wall fill will be used instead.';
+  $('#aiStatus').textContent = S.ai && S.fillMode === 'openai'
+    ? 'The eraser is set to OpenAI, so photos are sent to OpenAI when you erase.'
+    : 'Everything runs on your device. Your photos are never uploaded.';
   try { if (await db.get('project')) $('#resume').hidden = false; } catch { /* private mode */ }
   go('start');
 })();

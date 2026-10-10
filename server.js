@@ -48,10 +48,12 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
+  '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.onnx': 'application/octet-stream',
+  '.pdf': 'application/pdf',
 };
 
-function send(res, code, body, type = 'application/json') {
-  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+function send(res, code, body, type = 'application/json', cache = 'no-store') {
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': cache });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
@@ -143,7 +145,9 @@ function serveStatic(req, res) {
   if (!file.startsWith(PUBLIC)) return send(res, 403, 'Forbidden', 'text/plain');
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, 'Not found', 'text/plain');
-    send(res, 200, data, TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream');
+    // The AI model and libraries are large and never change in place: let browsers keep them.
+    const longCache = /^\/(models|vendor)\//.test(p) ? 'public, max-age=31536000, immutable' : 'no-store';
+    send(res, 200, data, TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', longCache);
   });
 }
 
