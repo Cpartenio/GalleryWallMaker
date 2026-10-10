@@ -3,7 +3,8 @@
     "public": "public",
     "ignore": ["**/.*", "vendor/ort-local/**"],
     "rewrites": [
-      { "source": "/api/fill", "function": { "functionId": "fill", "region": "us-central1" } }
+      { "source": "/api/fill", "function": { "functionId": "fill", "region": "us-central1" } },
+      { "source": "/api/suggest", "function": { "functionId": "suggest", "region": "us-central1" } }
     ],
     "headers": [
       {

@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { fillRequest } = require('./functions/fill');
+const { suggestRequest } = require('./functions/suggest');
 
 function loadEnv(file) {
   const env = {};
@@ -160,6 +161,11 @@ const server = http.createServer(async (req, res) => {
       return res.end('Password required');
     }
     if (req.method === 'GET' && req.url === '/api/status') return send(res, 200, { ai: !!API_KEY, model: MODEL, fill: true });
+    if (req.method === 'POST' && req.url === '/api/suggest') {
+      const body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8') || '{}');
+      const out = await suggestRequest(body);
+      return send(res, out.status, out.body);
+    }
     if (req.method === 'POST' && req.url.startsWith('/api/fill')) {
       const u = new URL(req.url, 'http://x');
       const out = await fillRequest({

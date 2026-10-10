@@ -213,3 +213,45 @@ body.compact #bar > :last-child { margin-right: auto; }
   body.compact #bar > :first-child { margin-left: 0; margin-top: 0; }
   body.compact #bar > :last-child { margin-right: 0; }
 }
+
+/* Bottom sheet on phones, centred card elsewhere. */
+#sheet { position: fixed; inset: 0; z-index: 8; background: rgba(31, 29, 26, 0.25); display: flex; align-items: center; justify-content: center; padding: 16px; }
+#sheet[hidden] { display: none; }
+.sheet-card {
+  width: min(560px, 100%); max-height: min(80vh, 680px); overflow-y: auto; background: var(--bg); border-radius: 18px;
+  padding: 16px 18px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  -webkit-user-select: text; user-select: text;
+}
+.sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.sheet-head h2 { flex: 1; margin: 0; font-size: 19px; }
+.sheet-note { color: var(--muted); margin: 4px 0 14px; font-size: 15px; }
+.sheet-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sheet-row input {
+  width: 96px; min-height: 48px; font: inherit; font-size: 18px; text-align: center; border: 1px solid var(--line);
+  border-radius: 12px; background: #fff;
+}
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-left: auto; }
+.seg button { border: 0; border-radius: 0; min-height: 46px; padding: 0 14px; background: #fff; }
+.seg button.on { background: var(--ink); color: var(--bg); }
+.sheet-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+body.compact #sheet { align-items: flex-end; padding: 0; }
+body.compact .sheet-card { border-radius: 18px 18px 0 0; width: 100%; max-height: 85vh; }
+
+/* Ideas sheet */
+.ideas-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: 14px; margin: 4px 0 12px; }
+.swatches { display: inline-flex; gap: 4px; }
+.swatches i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.12); display: inline-block; }
+.ideas { display: flex; flex-direction: column; gap: 10px; }
+.idea { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px; }
+.idea-thumb { flex: none; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; }
+.idea-thumb img, .idea-thumb canvas { max-width: 64px; max-height: 64px; box-shadow: 0 1px 4px rgba(0,0,0,0.25); }
+.idea-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.idea-meta b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.idea-meta span { color: var(--muted); }
+.idea-actions { display: flex; flex-direction: column; gap: 6px; }
+.idea-actions button, .idea-actions a.button { min-height: 36px; padding: 0 12px; font-size: 14px; border-radius: 10px; }
+.disclosure { color: var(--muted); font-size: 12px; margin: 14px 0 0; text-align: center; }
+/* Wide screens: keep the arrange toolbar on one row. */
+body:not(.compact) #bar { gap: 8px; }
+body:not(.compact) #bar button { padding: 0 14px; }
+body:not(.compact) #bar .iconbtn { min-width: 50px; border: 1px solid var(--line); background: #fff; }

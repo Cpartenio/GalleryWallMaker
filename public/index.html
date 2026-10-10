@@ -50,6 +50,12 @@
   <div id="layers" hidden></div>
   <footer id="bar"></footer>
 
+  <div id="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <div class="sheet-head"><h2 id="sheetTitle"></h2><button class="iconbtn" id="sheetClose" aria-label="Close">✕</button></div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
   <div id="busy" hidden><div class="spinner"></div><p id="busyText">Working…</p></div>
   <div id="toast" hidden></div>
   <input type="file" id="file" accept="image/*" hidden>
@@ -58,5 +64,6 @@
   <script src="app.js"></script>
   <script src="detect.js"></script>
   <script src="inpaint.js"></script>
+  <script src="ideas.js"></script>
 </body>
 </html>

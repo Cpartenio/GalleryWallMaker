@@ -50,12 +50,21 @@ No OpenAI key or password is involved: the Firebase version is free for visitors
    - **Layers** opens a strip of thumbnails at the bottom. Tap the eye to hide or show a picture (hidden ones are left out of the saved image), or tap a thumbnail to select it.
    - Frames that were already on the wall keep their **original size** (🔒). Tap *Size locked* to unlock one if you need to.
    - **+ Add picture**: photograph a new piece, drag the 4 dots to its corners (this crops it and fixes any slant), and it's added to the wall. If the scale is known, type its real size (e.g. 16 × 20 in) and it's placed at exactly that size; one number keeps its proportions. Otherwise resize it with the corner dot or a pinch.
-   - **📏 Size**: no ruler sheet? Select an original frame and type its real width in inches to set the scale instead. Either way, every frame then shows its size in inches.
+   - **Size**: no ruler sheet? Select any frame, tap **Size** and enter its real width and/or height (inches or cm). It becomes the reference and the whole wall is measured from it; the title shows how much wall the photo covers. For pictures you add, **Size** sets their real size. **Sizes** labels every picture with its dimensions.
+   - **Ideas**: finds the biggest open space on the wall, the frame sizes that fit it and the colours already on the wall, then suggests framed art. **Try on wall** places a piece at its real size; **Shop** opens it on Amazon.
    - **↻ Redo wall** regenerates the empty wall if you don't like the result; your arrangement stays put. **Compare** toggles back to the original photo. **Save image** exports the result (iPad share sheet → Save Image).
 
 Works on phones (portrait or landscape), iPad and desktop. Zoom in to place corners precisely: pinch on touch screens; on desktop, Ctrl/⌘ + scroll or a trackpad pinch, scroll to pan, or the − / Fit / + buttons. Desktop keys: Esc deselects, Delete removes the selected box or hides the selected picture, arrow keys nudge (Shift for bigger steps), + / − / 0 zoom.
 
 Your work autosaves in the browser, so a Safari reload won't lose it (*Continue my last wall*).
+
+## Amazon suggestions (Ideas)
+
+- **`public/config.json`**: set `amazonTag` to your Associates tracking ID (e.g. `yourname-20`). Every Amazon link gets it, and the required disclosure line appears in the Ideas panel.
+- **Always on**: "shop this size" ideas, i.e. Amazon searches for each frame size that fits, in the wall's colours, with a preview you can try on the wall.
+- **Hand-picked products (optional)**: list them in `public/suggestions.json`:
+  `[{ "title": "Sage botanical prints, set of 3", "url": "https://www.amazon.com/dp/ASIN", "w": 16, "h": 20, "colors": ["sage", "cream"], "image": null }]`
+- **Creators API (when your account qualifies)**: Amazon replaced PA-API 5 with the Creators API, which requires 10 qualifying sales in the past 30 days. Then set `amazonClientId`, `amazonClientSecret` and `amazonPartnerTag` (plus `amazonMarketplace` and `amazonTokenUrl` outside North America) on the server, or in `functions/.env` for Firebase. Ideas will then show real products that fit, with prices.
 
 ## Config (`.env`)
 

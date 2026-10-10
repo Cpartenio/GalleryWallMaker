@@ -37,6 +37,8 @@ const S = {
   rulerOn: localGet('gw.ruler') !== 'off',      // look for the printed ruler sheet to get real sizes
   sheet: undefined,                             // ruler sheet result: object, null (not found) or undefined (not looked)
   scaleSource: null,                            // 'sheet' | 'manual'
+  units: localGet('gw.units') === 'cm' ? 'cm' : 'in',
+  showSizes: localGet('gw.sizes') === 'on',
   // Eraser: 'device' (free, private, default), 'server' (backup for devices that can't run it), 'openai'.
   fillMode: ['device', 'server', 'openai'].includes(localGet('gw.fill')) ? localGet('gw.fill') : 'device',
   serverFill: false,
@@ -495,7 +497,7 @@ function save() {
       await db.set('project', {
         photo: urlOf(S.photo), clean: urlOf(S.clean), pxPerInch: S.pxPerInch, scaleSource: S.scaleSource,
         boxes: S.boxes.map((q) => ({ pts: q.map((p) => ({ x: p.x, y: p.y })), kind: q.kind || null })),
-        pieces: S.pieces.map((p) => ({ url: urlOf(p.img), name: p.name, x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked, hidden: !!p.hidden })),
+        pieces: S.pieces.map((p) => ({ url: urlOf(p.img), name: p.name, x: p.x, y: p.y, w: p.w, h: p.h, original: p.original, locked: p.locked, hidden: !!p.hidden, ref: !!p.ref, link: p.link || null })),
       });
     } catch (e) { console.warn('save failed', e); }
   }, 600);
@@ -513,7 +515,7 @@ async function resume() {
     for (const q of p.pieces) {
       S.pieces.push({
         id: nextId++, name: q.name || (q.original ? 'Frame' : 'Added'), img: await imageToCanvas(q.url, 1e9),
-        x: q.x, y: q.y, w: q.w, h: q.h, original: q.original, locked: q.locked, hidden: !!q.hidden,
+        x: q.x, y: q.y, w: q.w, h: q.h, original: q.original, locked: q.locked, hidden: !!q.hidden, ref: !!q.ref, link: q.link || null,
       });
     }
     S.boxes = (p.boxes || []).map((b) => Object.assign(b.pts, b.kind ? { kind: b.kind } : {}));
@@ -643,9 +645,17 @@ function label(text, x, y, bg = '#2563eb') {
   ctx.fillStyle = '#fff';
   ctx.fillText(text, x + 7, y + 17);
 }
+// Real-world length of `px` photo pixels, in the user's unit.
 function inches(px) {
   const v = px / S.pxPerInch;
+  if (S.units === 'cm') return `${Math.round(v * 2.54 * 10) / 10} cm`;
   return `${Math.round(v * 4) / 4}″`.replace('.25″', '¼″').replace('.5″', '½″').replace('.75″', '¾″');
+}
+function feetInches(px) {
+  const v = px / S.pxPerInch;
+  if (S.units === 'cm') return `${Math.round(v * 2.54) / 100} m`;
+  const ft = Math.floor(v / 12), inch = Math.round(v - ft * 12);
+  return inch === 12 ? `${ft + 1}′` : `${ft}′ ${inch}″`;
 }
 
 function draw() {
@@ -712,13 +722,34 @@ function draw() {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    if (S.showSizes && S.pxPerInch) {
+      // Every picture's real size, centred under it.
+      ctx.font = '600 12px -apple-system, sans-serif';
+      const placed = [];
+      for (const q of [...S.pieces].sort((m, n) => n.w * n.h - m.w * m.h)) { // big pictures get first claim
+        if (q.hidden || q === S.piece) continue;
+        const t = `${inches(q.w)} × ${inches(q.h)}`, tw = ctx.measureText(t).width + 10;
+        const a = toScreen({ x: q.x + q.w / 2, y: q.y + q.h });
+        // Inside the bottom edge when the picture is big enough on screen, else just below it.
+        if (q.h * view.s > 60) a.y -= 26;
+        const box = { x: a.x - tw / 2, y: a.y + 4, w: tw, h: 18 };
+        if (placed.some((b) => box.x < b.x + b.w + 4 && b.x < box.x + box.w + 4 && box.y < b.y + b.h + 2 && b.y < box.y + box.h + 2)) continue;
+        placed.push(box);
+        ctx.fillStyle = 'rgba(31,29,26,0.82)';
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(a.x - tw / 2, a.y + 4, tw, 18, 9) : ctx.rect(a.x - tw / 2, a.y + 4, tw, 18);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.fillText(t, a.x - tw / 2 + 5, a.y + 17);
+      }
+    }
     const p = S.piece;
     if (p) {
       const a = toScreen(p);
       ctx.lineWidth = 3;
       ctx.strokeStyle = '#2563eb';
       ctx.strokeRect(a.x - 2, a.y - 2, p.w * view.s + 4, p.h * view.s + 4);
-      const tag = [p.locked ? '🔒 original size' : null, S.pxPerInch ? `${inches(p.w)} × ${inches(p.h)}` : null].filter(Boolean).join('  ·  ');
+      const tag = [p.locked ? '🔒 original size' : null, p.ref ? '📏 reference' : null, S.pxPerInch ? `${inches(p.w)} × ${inches(p.h)}` : null].filter(Boolean).join('  ·  ');
       if (tag) label(tag, a.x, a.y - 30);
       if (!p.locked) handle({ x: p.x + p.w, y: p.y + p.h });
     }
@@ -1024,6 +1055,8 @@ const ICONS = {
   newWall: 'M4 4h16v16H4zM9 12h6M12 9v6',
   close: 'M6 6l12 12M18 6L6 18',
   wand: 'M4 20L15 9M14 3l.9 2.1L17 6l-2.1.9L14 9l-.9-2.1L11 6l2.1-.9z',
+  ideas: 'M4 7h16l-1.5 13h-13zM9 7V5a3 3 0 0 1 6 0v2',
+  shop: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
 
@@ -1084,7 +1117,8 @@ function toolbarItems() {
       add('Done', 'Done', 'check', () => { S.piece = null; updateBar(); draw(); }, { kind: 'primary' });
       if (p.original) add(p.locked ? 'Size locked' : 'Resizable', p.locked ? 'Locked' : 'Unlocked', p.locked ? 'lock' : 'unlock',
         () => { p.locked = !p.locked; save(); updateBar(); draw(); }, { on: !p.locked });
-      add('Size', 'Size', 'ruler', () => setSize(p));
+      if (p.link) add('Shop on Amazon', 'Shop', 'shop', () => window.open(p.link, '_blank', 'noopener'));
+      if (!p.idea) add('Size', 'Size', 'ruler', () => setSize(p));
       add('Forward', 'Forward', 'forward', () => { S.pieces = S.pieces.filter((x) => x !== p).concat(p); save(); updateBar(); draw(); });
       add('Hide', 'Hide', 'eyeOff', () => setHidden(p, true));
       add('Remove', 'Remove', 'trash', () => {
@@ -1095,6 +1129,16 @@ function toolbarItems() {
       add('Add picture', 'Add', 'plus', addPicture, { kind: 'primary' });
       add('Layers', 'Layers', 'layers', () => { S.layersOpen = !S.layersOpen; localSet('gw.layers', S.layersOpen ? 'open' : 'closed'); updateBar(); resize(); }, { on: S.layersOpen });
       add('Snap', 'Snap', 'magnet', () => { S.snap = !S.snap; localSet('gw.snap', S.snap ? 'on' : 'off'); updateBar(); }, { on: S.snap });
+      add('Sizes', 'Sizes', 'ruler', () => {
+        if (!S.pxPerInch) {
+          const ref = S.pieces.filter((x) => !x.hidden).sort((a, b) => b.w * b.h - a.w * a.h)[0];
+          if (!ref) return toast('Add a picture first, then give it its real size.');
+          S.piece = ref; updateBar(); draw();
+          return setSize(ref);
+        }
+        S.showSizes = !S.showSizes; localSet('gw.sizes', S.showSizes ? 'on' : 'off'); updateBar(); draw();
+      }, { on: S.showSizes && !!S.pxPerInch });
+      add('Ideas', 'Ideas', 'ideas', () => openIdeas());
       add(S.before ? 'Showing original' : 'Compare', 'Compare', 'compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, { on: S.before });
       if (S.boxes.length) add('Redo wall', 'Redo wall', 'redo', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
       add('Save image', 'Save', 'save', exportImage);
@@ -1116,7 +1160,8 @@ function updateBar() {
   const bar = $('#bar'), mBack = $('#mBack'), mAction = $('#mAction');
   bar.innerHTML = ''; mBack.innerHTML = ''; mAction.innerHTML = '';
   $('#mTitle').innerHTML = STEP_TITLES[S.step]
-    ? `${STEP_TITLES[S.step]}<small>${S.step === 'arrange' && S.piece ? S.piece.name || 'Picture' : `Step ${STEP_NUM[S.step]} of 4`}</small>` : '';
+    ? `${STEP_TITLES[S.step]}<small>${S.step === 'arrange' && S.piece ? S.piece.name || 'Picture'
+      : S.step === 'arrange' && S.pxPerInch && S.clean ? `Photo shows ${feetInches(S.clean.width)} of wall` : `Step ${STEP_NUM[S.step]} of 4`}</small>` : '';
   const make = (it, style) => {
     const b = document.createElement('button');
     b.onclick = it.fn;
@@ -1152,7 +1197,7 @@ function updateBar() {
     if (S.step === 'arrange') primary.forEach((i) => bar.appendChild(make(i, 'button')));
     rest.filter((i) => i.kind !== 'menu').forEach((i) => bar.appendChild(make(i, 'button')));
     spacer();
-    rest.filter((i) => i.kind === 'menu').forEach((i) => bar.appendChild(make(i, 'button')));
+    rest.filter((i) => i.kind === 'menu').forEach((i) => bar.appendChild(make(i, 'back'))); // icon only
     if (S.step !== 'arrange') primary.forEach((i) => bar.appendChild(make(i, 'button')));
   }
   // Real-size inputs for a new picture float over the photo on phones, sit in the bar otherwise.
@@ -1384,32 +1429,73 @@ async function placeNewPiece() {
   toast(sized ? `Added at ${inches(w)} × ${inches(h)}.` : S.pxPerInch ? 'Tap 📏 Size to set its real size.' : 'Drag the corner dot (or pinch) to resize it.');
 }
 
-function setSize(p) {
-  if (!S.pxPerInch) {
-    if (!p.original) {
-      const ref = S.pieces.find((x) => x.original);
-      return toast(ref ? 'First select one of your original frames and tap 📏 Size to tell me how wide it is.' : 'Sizes need a known frame on the wall to measure against.', 5000);
-    }
-    const v = parseFloat(prompt('How wide is this frame, in inches? (sets the scale for everything)'));
-    if (!(v > 0)) return;
-    S.pxPerInch = p.w / v;
-    S.scaleSource = 'manual';
-    toast(`Scale set. This frame is ${inches(p.w)} × ${inches(p.h)}.`);
-  } else if (p.locked) {
-    const v = parseFloat(prompt(`Correct the scale: how wide is this frame in inches? (now ${inches(p.w)})`));
-    if (!(v > 0)) return;
-    S.pxPerInch = p.w / v;
-    S.scaleSource = 'manual';
-  } else {
-    const v = parseFloat(prompt(`Real width of this picture, in inches? (now ${inches(p.w)})`));
-    if (!(v > 0)) return;
-    const cx = p.x + p.w / 2, cy = p.y + p.h / 2, aspect = p.w / p.h;
-    p.w = v * S.pxPerInch; p.h = p.w / aspect;
-    p.x = cx - p.w / 2; p.y = cy - p.h / 2;
-  }
-  save();
-  draw();
+// ---------- bottom sheet (phones) / dialog (larger screens) ----------
+function openSheet(title, build) {
+  $('#sheetTitle').textContent = title;
+  const body = $('#sheetBody');
+  body.innerHTML = '';
+  build(body);
+  $('#sheet').hidden = false;
 }
+function closeSheet() { $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; }
+$('#sheetClose').onclick = closeSheet;
+$('#sheet').addEventListener('pointerdown', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+
+// Real size of a picture. The first picture given a size (or any frame from the photo) becomes
+// the reference: the whole wall is measured from it.
+function setSize(p) {
+  const calibrate = !S.pxPerInch || p.original;
+  const toUnit = (inch) => (S.units === 'cm' ? Math.round(inch * 2.54 * 10) / 10 : Math.round(inch * 4) / 4);
+  const fromUnit = (v) => (S.units === 'cm' ? v / 2.54 : v);
+  openSheet(p.original ? 'Real size of this frame' : 'Real size of this picture', (body) => {
+    body.append(el('p', { className: 'sheet-note', textContent: !S.pxPerInch
+      ? 'Enter its real size and every other picture on the wall is measured from it. Tip: measure the outside of the frame.'
+      : p.original
+        ? 'This frame sets the scale for the whole wall. Fix its size here if anything measures wrong.'
+        : 'Resizes this picture to its real size on the wall.' }));
+    const w = el('input', { inputMode: 'decimal', placeholder: 'Width', value: S.pxPerInch ? toUnit(p.w / S.pxPerInch) : '' });
+    const h = el('input', { inputMode: 'decimal', placeholder: 'Height', value: S.pxPerInch ? toUnit(p.h / S.pxPerInch) : '' });
+    const unit = el('div', { className: 'seg' });
+    for (const u of ['in', 'cm']) {
+      unit.append(el('button', { textContent: u, className: S.units === u ? 'on' : '', onclick: () => {
+        const conv = (inp) => { const v = parseFloat(inp.value); if (v > 0) inp.value = u === 'cm' ? Math.round(v * 2.54 * 10) / 10 : Math.round((v / 2.54) * 4) / 4; };
+        if (S.units !== u) { conv(w); conv(h); }
+        S.units = u; localSet('gw.units', u);
+        unit.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.textContent === u));
+      } }));
+    }
+    body.append(el('div', { className: 'sheet-row' }, w, el('span', { textContent: '×' }), h, unit));
+    const save = el('button', { className: 'primary', textContent: 'Save', onclick: () => {
+      const W = fromUnit(parseFloat(w.value)), H = fromUnit(parseFloat(h.value));
+      if (!(W > 0) && !(H > 0)) return toast('Enter the width, the height, or both.');
+      if (calibrate) {
+        // One number or both (averaged: photos are rarely perfectly square-on).
+        const r = [W > 0 ? p.w / W : null, H > 0 ? p.h / H : null].filter(Boolean);
+        S.pxPerInch = r.reduce((a, b) => a + b, 0) / r.length;
+        S.scaleSource = 'manual';
+        S.pieces.forEach((x) => { x.ref = x === p; });
+        toast(`Scale set from ${p.name || 'this picture'}. Every picture now shows its real size.`, 4500);
+      } else {
+        const cx = p.x + p.w / 2, cy = p.y + p.h / 2, aspect = p.w / p.h;
+        p.w = (W > 0 ? W : (H * aspect)) * S.pxPerInch;
+        p.h = H > 0 ? H * S.pxPerInch : p.w / aspect;
+        p.x = cx - p.w / 2; p.y = cy - p.h / 2;
+      }
+      closeSheet();
+      save_();
+      updateBar();
+      draw();
+    } });
+    body.append(el('div', { className: 'sheet-actions' }, el('button', { textContent: 'Cancel', onclick: closeSheet }), save));
+    setTimeout(() => (S.pxPerInch ? null : w.focus()), 50);
+  });
+}
+const save_ = () => save();
 
 async function exportImage() {
   busy('Preparing image…');
