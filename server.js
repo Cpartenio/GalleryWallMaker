@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { fillRequest } = require('./functions/fill');
 
 function loadEnv(file) {
   const env = {};
@@ -158,7 +159,15 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Gallery Wall Maker", charset="UTF-8"' });
       return res.end('Password required');
     }
-    if (req.method === 'GET' && req.url === '/api/status') return send(res, 200, { ai: !!API_KEY, model: MODEL });
+    if (req.method === 'GET' && req.url === '/api/status') return send(res, 200, { ai: !!API_KEY, model: MODEL, fill: true });
+    if (req.method === 'POST' && req.url.startsWith('/api/fill')) {
+      const u = new URL(req.url, 'http://x');
+      const out = await fillRequest({
+        query: Object.fromEntries(u.searchParams), body: await readBody(req, 20 * 1024 * 1024),
+        ip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress,
+      });
+      return send(res, out.status, out.body, out.type || 'text/plain');
+    }
     if (req.method === 'POST' && req.url === '/api/erase') return await handleErase(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
     send(res, 405, { error: 'Method not allowed' });

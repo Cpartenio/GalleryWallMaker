@@ -1,0 +1,10 @@
+{
+  "name": "gallery-wall-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "firebase-functions": "^7.4.0",
+    "onnxruntime-node": "^1.30.0"
+  }
+}

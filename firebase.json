@@ -1,0 +1,27 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": ["**/.*", "vendor/ort-local/**"],
+    "rewrites": [
+      { "source": "/api/fill", "function": { "functionId": "fill", "region": "us-central1" } }
+    ],
+    "headers": [
+      {
+        "source": "/@(models|vendor)/**",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      },
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git", "*.local"],
+      "predeploy": ["cp public/models/migan_pipeline_v2.onnx functions/migan_pipeline_v2.onnx"]
+    }
+  ]
+}

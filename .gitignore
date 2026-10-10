@@ -2,3 +2,6 @@
 node_modules/
 .DS_Store
 public/vendor/ort-local/
+functions/migan_pipeline_v2.onnx
+functions/node_modules/
+.firebase/

@@ -24,6 +24,18 @@ The free plan sleeps after about 15 minutes of no use, so the first visit after 
 
 **Updating:** Render only auto-deploys new pushes when the service is linked through your connected GitHub account. A service made from the public repo link has to be updated by hand: in the Render dashboard, open the service and choose **Manual Deploy → Deploy latest commit**. To get automatic updates, connect GitHub under Render's account settings and create the service via **New → Blueprint**, picking this repo from your GitHub list.
 
+## Host on Firebase (static site + backup eraser)
+
+Erasing normally runs on the visitor's device. Phones that can't manage it (an iPhone running out of memory reloads the page) automatically switch to a **backup eraser**: the same model running in a Firebase Cloud Function that scales to zero.
+
+1. Create a Firebase project and upgrade it to the **Blaze** (pay-as-you-go) plan. Cloud Functions need it, and the free allowance covers a lot of erases.
+2. `npm install -g firebase-tools`, then `firebase login`.
+3. `cp .firebaserc.example .firebaserc` and put your project ID in it.
+4. `cd functions && npm install && cd ..`
+5. `firebase deploy`. Hosting serves `public/`, and `/api/fill` goes to the function. The model is copied into the function at deploy time.
+
+No OpenAI key or password is involved: the Firebase version is free for visitors, with photos kept on their device unless the backup eraser is used.
+
 ## How it works
 
 1. **Photo**: take or choose a photo of the wall (or tap *Try the sample wall*).
@@ -32,7 +44,7 @@ The free plan sleeps after about 15 minutes of no use, so the first visit after 
 3. **Mark frames**: frames already on the wall are found automatically and shown as dashed suggestions; adjust or delete them, or drag a box around anything missed. Tap a box to select it, then drag any corner on its own to fit a slanted or odd-shaped frame. Each frame is squared up when it's cut out.
    - **✨ Auto-find on/off** turns the suggestions on or off. Turning it off removes the suggestions you haven't touched.
    - **📏 Ruler sheet on/off** turns the ruler sheet on or off. When it's found, it's outlined in purple and erased along with the frames.
-4. **Erase**: free and private. An inpainting AI model (MI-GAN) runs right in the browser, on the device's GPU when available, and fills every marked frame at once. The fill is then blended so the wall's lighting runs seamlessly across each spot. The first erase downloads the model (~28 MB) and the browser keeps it after that. If the model can't load, a smooth fill is used instead. Optional: with an OpenAI key on the server, an **Eraser** switch lets you use OpenAI's image editing instead.
+4. **Erase**: free and private. An inpainting AI model (MI-GAN) runs right in the browser and fills every marked frame at once, then the fill is blended so the wall's lighting runs seamlessly across each spot. The first erase downloads the model (~28 MB); the browser keeps it after that. Phones use a lighter setting. If a device can't run it (or the page crashes mid-erase), the app brings you back to your marked frames and uses the **backup eraser** on the server instead; only a downscaled copy of the photo is sent. If neither is available, a smooth fill is used. The **Eraser** button on the Mark step switches between on-device, backup server and (if the server has a key) OpenAI.
 5. **Arrange**:
    - Drag frames around. They snap to line up with other frames and with the wall's centre; turn this off with **Snap on/off**.
    - **Layers** opens a strip of thumbnails at the bottom. Tap the eye to hide or show a picture (hidden ones are left out of the saved image), or tap a thumbnail to select it.
