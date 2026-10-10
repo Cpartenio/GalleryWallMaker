@@ -39,6 +39,7 @@ const S = {
   scaleSource: null,                            // 'sheet' | 'manual'
   units: localGet('gw.units') === 'cm' ? 'cm' : 'in',
   showSizes: localGet('gw.sizes') === 'on',
+  features: { ideas: false },                   // switched on from config.json
   // Eraser: 'device' (free, private, default), 'server' (backup for devices that can't run it), 'openai'.
   fillMode: ['device', 'server', 'openai'].includes(localGet('gw.fill')) ? localGet('gw.fill') : 'device',
   serverFill: false,
@@ -370,12 +371,12 @@ async function makeCleanWall(quads) {
   const photo = S.photo, W = photo.width, H = photo.height;
   if (!quads.length) return copyCanvas(photo);
   if (S.ai && S.fillMode === 'openai') {
-    busy('Regenerating an empty wall with OpenAI…\nthis can take up to a minute');
+    busy('Processing your wall with OpenAI…\nthis can take up to a minute');
     try {
       return await aiFill(photo, quads, Math.round(Math.max(W, H) * 0.012));
     } catch (e) {
       console.error(e);
-      toast(`OpenAI erase failed (${e.message}). Used the free eraser instead.`, 6000);
+      toast(`OpenAI processing failed (${e.message}). Used the free processing instead.`, 6000);
     }
   }
   $('#toast').hidden = true;
@@ -383,17 +384,17 @@ async function makeCleanWall(quads) {
   // If the page dies mid-erase (a phone running out of memory reloads the tab), the next visit
   // brings the user back to their marked frames and switches this device to the backup eraser.
   if (source === 'device') await savePending();
-  busy(source === 'server' ? 'Erasing frames with the backup eraser…' : 'Erasing frames on your device…');
+  busy(source === 'server' ? 'Processing your wall on our server…' : 'Processing your wall on this device…');
   await nextFrame();
   const { canvas, used } = await fillWall(photo, quads, Math.round(Math.max(W, H) * 0.02), {
     source,
     allowServer: S.serverFill,
-    onProgress: (f) => busy(`Downloading the eraser (first time only)… ${Math.round(f * 100)}%`),
-    onStage: (t) => t === 'server' && source === 'device' && busy('Trying the backup eraser…'),
+    onProgress: (f) => busy(`Downloading the processor (first time only)… ${Math.round(f * 100)}%`),
+    onStage: (t) => t === 'server' && source === 'device' && busy('Trying backup processing…'),
   });
   clearPending();
-  if (used === 'smooth') toast("The AI eraser wasn't available, so a simpler smooth fill was used. Try Redo wall later.", 6000);
-  else if (used === 'server' && source === 'device') toast('Your device couldn\'t run the eraser, so the backup eraser was used.', 5000);
+  if (used === 'smooth') toast("AI processing wasn't available, so a simpler smooth fill was used. Try Redo wall later.", 6000);
+  else if (used === 'server' && source === 'device') toast('This device couldn\'t process the wall, so backup processing on our server was used.', 5000);
   return canvas;
 }
 
@@ -430,8 +431,8 @@ async function recoverFromCrash() {
     S.pieces = []; S.clean = null; S.sel = -1;
     go('mark');
     toast(S.serverFill
-      ? 'This device ran out of memory while erasing, so it will use the backup eraser now. Tap Erase to try again.'
-      : 'This device ran out of memory while erasing. Tap Erase to use a simpler fill.', 8000);
+      ? 'This device ran out of memory while processing, so it will use backup processing now. Tap Process to try again.'
+      : 'This device ran out of memory while processing. Tap Process to use a simpler fill.', 8000);
   } catch { busy(''); return false; }
   busy('');
   db.del('pending').catch(() => {});
@@ -1094,21 +1095,21 @@ function toolbarItems() {
     const modes = ['device', ...(S.serverFill ? ['server'] : []), ...(S.ai ? ['openai'] : [])];
     if (modes.length > 1) {
       const mode = modes.includes(S.fillMode) ? S.fillMode : 'device';
-      const names = { device: ['Eraser: on this device', 'On-device'], server: ['Eraser: backup server', 'Backup'], openai: ['Eraser: OpenAI', 'OpenAI'] };
+      const names = { device: ['Processing: on this device', 'On-device'], server: ['Processing: backup server', 'Backup'], openai: ['Processing: OpenAI', 'OpenAI'] };
       add(names[mode][0], names[mode][1], 'wand', () => {
         S.fillMode = modes[(modes.indexOf(mode) + 1) % modes.length];
         localSet('gw.fill', S.fillMode);
         updateBar();
-        toast({ device: 'Erasing on this device: free, and your photo stays here.',
-          server: 'Erasing on the backup server: for devices that struggle. A small copy of the photo is uploaded.',
-          openai: 'Erasing with OpenAI: uses the API key on this server.' }[S.fillMode], 5000);
+        toast({ device: 'Processing on this device: free, and your photo stays here.',
+          server: 'Processing on our backup server: for devices that struggle. A small copy of the photo is uploaded.',
+          openai: 'Processing with OpenAI: uses the API key on this server.' }[S.fillMode], 5000);
       }, { on: mode !== 'device' });
     }
     if (S.sel >= 0) add('Delete box', 'Delete', 'trash', () => { S.boxes.splice(S.sel, 1); S.sel = -1; updateBar(); draw(); }, { danger: true });
     const n = S.boxes.filter((q) => q.kind !== 'sheet').length;
     const hasSheet = S.boxes.some((q) => q.kind === 'sheet');
     const what = [n ? `${n} frame${n > 1 ? 's' : ''}` : '', hasSheet ? 'sheet' : ''].filter(Boolean).join(' + ');
-    add(what ? `Erase ${what}` : 'Wall is empty: Next', what ? 'Erase' : 'Next',
+    add(what ? `Process ${what}` : 'Wall is empty: Next', what ? 'Process' : 'Next',
       what ? 'wand' : 'next', () => { S.sel = -1; eraseFrames(); }, { kind: 'primary' });
   } else if (S.step === 'arrange') {
     const p = S.piece;
@@ -1138,9 +1139,9 @@ function toolbarItems() {
         }
         S.showSizes = !S.showSizes; localSet('gw.sizes', S.showSizes ? 'on' : 'off'); updateBar(); draw();
       }, { on: S.showSizes && !!S.pxPerInch });
-      add('Ideas', 'Ideas', 'ideas', () => openIdeas());
+      if (S.features.ideas) add('Ideas', 'Ideas', 'ideas', () => openIdeas());
       add(S.before ? 'Showing original' : 'Compare', 'Compare', 'compare', () => { S.before = !S.before; S.piece = null; updateBar(); draw(); }, { on: S.before });
-      if (S.boxes.length) add('Redo wall', 'Redo wall', 'redo', () => { if (confirm('Regenerate the empty wall? Your arrangement stays as it is.')) redoWall(); });
+      if (S.boxes.length) add('Redo wall', 'Redo wall', 'redo', () => { if (confirm('Process the empty wall again? Your arrangement stays as it is.')) redoWall(); });
       add('Save image', 'Save', 'save', exportImage);
       add('Start over', 'New wall', 'newWall', () => { if (confirm('Start over with a new wall photo?')) { db.del('project').catch(() => {}); go('start'); } }, { kind: 'menu' });
     }
@@ -1554,10 +1555,14 @@ stage.addEventListener('pointerdown', () => showTip(false), true);
     S.ai = false;
     S.serverFill = true; // static hosting without a status endpoint: the backup eraser may still exist
   }
+  try {
+    const cfg = await (await fetch('config.json')).json();
+    S.features.ideas = cfg.ideas === true;
+  } catch { /* defaults */ }
   const recovered = await recoverFromCrash();
   $('#aiStatus').textContent = {
-    openai: 'The eraser is set to OpenAI, so photos are sent to OpenAI when you erase.',
-    server: 'The eraser is set to the backup server, so a small copy of your photo is uploaded when you erase.',
+    openai: 'Processing is set to OpenAI, so photos are sent to OpenAI when you process a wall.',
+    server: 'Processing is set to our backup server, so a small copy of your photo is uploaded when you process a wall.',
   }[S.fillMode] || 'Everything runs on your device. Your photos are never uploaded.';
   try { if (await db.get('project')) $('#resume').hidden = false; } catch { /* private mode */ }
   if (!recovered) go('start');

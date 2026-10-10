@@ -167,9 +167,9 @@ async function serverModelFill(photo, quads, pad) {
   const res = await fetch(`api/fill?w=${w}&h=${h}`, {
     method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes,
   });
-  if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Backup eraser error ${res.status}`);
+  if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Backup processing error ${res.status}`);
   const o = new Uint8Array(await res.arrayBuffer());
-  if (o.length !== 3 * w * h) throw new Error('Backup eraser sent an unexpected result');
+  if (o.length !== 3 * w * h) throw new Error('Backup processing sent an unexpected result');
   return resultCanvas(o, w, h, photo);
 }
 
