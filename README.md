@@ -20,7 +20,9 @@ There are no dependencies to install; it needs Node 18 or newer. The server prin
 3. Deploy. You get a secure `https://gallerywallmaker-xxxx.onrender.com` URL.
 4. Open it on the iPad. Safari asks for a username and password: the username can be anything, and the password is your `appPassword`.
 
-The free plan sleeps after about 15 minutes of no use, so the first visit after that takes about 30–60 seconds to wake up. Every push to `master` redeploys automatically.
+The free plan sleeps after about 15 minutes of no use, so the first visit after that takes about 30–60 seconds to wake up.
+
+**Updating:** Render only auto-deploys new pushes when the service is linked through your connected GitHub account. A service made from the public repo link has to be updated by hand: in the Render dashboard, open the service and choose **Manual Deploy → Deploy latest commit**. To get automatic updates, connect GitHub under Render's account settings and create the service via **New → Blueprint**, picking this repo from your GitHub list.
 
 ## How it works
 
